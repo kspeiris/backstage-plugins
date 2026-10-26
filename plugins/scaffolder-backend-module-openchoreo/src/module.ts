@@ -23,6 +23,8 @@ import { createEnvironmentAction } from './actions/environment';
 import { createNotificationChannelAction } from './actions/notificationChannel';
 import { createNamespaceAction } from './actions/namespace';
 import { createDeploymentPipelineAction } from './actions/deploymentPipeline';
+import { createGitOpsValidateAction } from './actions/gitopsValidate';
+import { createReleaseBindingGenerateAction } from './actions/releaseBindingGenerate';
 /**
  * A backend module that registers the actions into the scaffolder
  */
@@ -71,6 +73,10 @@ export const scaffolderModule = createBackendModule({
           createClusterTraitDefinitionAction(config, immediateCatalog),
           createClusterWorkflowDefinitionAction(config, immediateCatalog),
           createDeploymentPipelineAction(config, immediateCatalog),
+
+          // PR-driven GitOps MVP
+          createGitOpsValidateAction(),
+          createReleaseBindingGenerateAction(),
         );
       },
     });

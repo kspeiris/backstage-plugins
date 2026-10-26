@@ -395,6 +395,10 @@ catalog:
       rules:
         - allow: [Template]
     - type: file
+      target: ../../templates/promote-openchoreo-component/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
       target: ../../templates/create-openchoreo-namespace/template.yaml
       rules:
         - allow: [Template]
