@@ -1,0 +1,13 @@
+apiVersion: openchoreo.dev/v1alpha1
+kind: ReleaseBinding
+
+metadata:
+  name: ${{ values.component }}-${{ values.targetEnvironment }}
+  namespace: ${{ values.namespace }}
+
+spec:
+  owner:
+    projectName: ${{ values.project }}
+    componentName: ${{ values.component }}
+  environment: ${{ values.targetEnvironment }}
+  releaseName: ${{ values.releaseName }}

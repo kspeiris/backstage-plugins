@@ -26,6 +26,22 @@ Platform definitions (namespace-scoped and cluster-scoped):
 - `openchoreo:trait-definition:create` / `openchoreo:clustertrait-definition:create`
 - `openchoreo:componentworkflow-definition:create` / `openchoreo:clusterworkflow-definition:create`
 
+GitOps promotion:
+
+- `openchoreo:gitops:validate` — validates the promotion inputs
+- `openchoreo:gitops:releasebinding:generate` — writes the ReleaseBinding that
+  promotes a component release to another environment
+
+`openchoreo:gitops:releasebinding:generate` calls the OCC CLI
+(`occ releasebinding generate --mode file-system`) against the fetched GitOps
+repository. OCC resolves the `Project`, the `DeploymentPipeline` and the
+`ComponentRelease` from the resources of that repository, so a repository that
+only carries the release binding tree cannot be processed by OCC. The action
+then writes the canonical ReleaseBinding manifest from the promotion inputs
+instead, and reports `generatedBy` as `direct` instead of `occ`. Set the
+`generationMode` input to `occ` to require the OCC CLI and to fail when the
+repository does not carry the OpenChoreo resources.
+
 ## Installation
 
 ```bash
