@@ -4,6 +4,7 @@ import type {
   WorkloadResource,
   ComponentRelease,
   ReleaseBindingCondition,
+  GitOpsChangeStatus,
 } from '@openchoreo/backstage-plugin-common';
 import type { Environment } from '../components/RuntimeLogs/types';
 
@@ -657,6 +658,12 @@ export interface OpenChoreoClientApi {
 
   /** Fetch environment deployment info for an entity */
   fetchEnvironmentInfo(entity: Entity): Promise<any>;
+
+  /** Fetch GitOps pull request and deployment status for an environment */
+  fetchGitOpsChangeStatus(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsChangeStatus>;
 
   /** Promote a deployment from one environment to another */
   promoteToEnvironment(

@@ -166,6 +166,11 @@ export {
 
 // Feature flags types
 export type { OpenChoreoFeatures, FeatureName } from './types/features';
+export type {
+  PullRequestState,
+  DeploymentState,
+  GitOpsChangeStatus,
+} from './types/gitops-change-status';
 
 // BFF response & request types (hand-written, decoupled from generated client)
 export type {

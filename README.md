@@ -135,6 +135,10 @@ The `app-config.local.yaml.example` file contains hardcoded values for:
 
 **Note:** `app-config.local.yaml` is gitignored and won't affect Docker builds or production deployments. The Docker build only uses `app-config.production.yaml`.
 
+Local SQLite data is stored in `.backstage-db/` and survives Backstage
+restarts. Keep this directory when restarting or updating the local portal; it
+contains plugin databases, including GitOps promotion records.
+
 #### Optional: GitHub Integration
 
 If you need GitHub integration for catalog/templates, add your personal access token to `app-config.local.yaml`:

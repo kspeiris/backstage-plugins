@@ -23,6 +23,7 @@ export { CellDiagram } from './components/CellDiagram/CellDiagram';
 export {
   WorkflowsOverviewCard,
   DeploymentStatusCard,
+  GitOpsStatusCard,
   RuntimeHealthCard,
   DeploymentPipelineCard,
   AccessControlPage,

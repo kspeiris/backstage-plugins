@@ -50,6 +50,7 @@ import { PromotePrimaryAction } from './PromotePrimaryAction';
 import { ProjectNotDeployedCallout } from './ProjectNotDeployedCallout';
 import { ReleaseBrowserDialog } from './ReleaseBrowserDialog';
 import { ReleaseManifestDialog } from './ReleaseManifestDialog';
+import { GitOpsChangeStatusPanel } from './GitOpsChangeStatusPanel';
 import type { ReleaseDeployments } from './releaseFormatters';
 import { RemoveDeploymentConfirmationDialog } from './RemoveDeploymentConfirmationDialog';
 import { SetupDetailPane } from './SetupDetailPane';
@@ -145,6 +146,7 @@ export const EnvironmentDetailPanel = ({
   const [manifestOpen, setManifestOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [gitOpsRefreshKey, setGitOpsRefreshKey] = useState(0);
   const { entity } = useEntity();
   const { environments, renderInvestigateAction } = useEnvironmentsContext();
   // A promote target whose project is not deployed there blocks the promote.
@@ -334,7 +336,10 @@ export const EnvironmentDetailPanel = ({
           <Box>
             <IconButton
               size="small"
-              onClick={onRefresh}
+              onClick={() => {
+                onRefresh();
+                setGitOpsRefreshKey(key => key + 1);
+              }}
               aria-label="Refresh environment"
             >
               <RefreshIcon fontSize="small" />
@@ -393,6 +398,11 @@ export const EnvironmentDetailPanel = ({
           </Box>
         ) : (
           <>
+            <GitOpsChangeStatusPanel
+              entity={entity}
+              environment={environment.resourceName ?? environment.name}
+              refreshKey={gitOpsRefreshKey}
+            />
             {failureBanner && (
               <Box className={classes.section}>
                 <DeploymentFailureBanner

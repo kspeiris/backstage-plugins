@@ -13,6 +13,7 @@ const defaultFeatures: OpenChoreoFeatures = {
   observability: { enabled: true },
   auth: { enabled: true },
   authz: { enabled: true },
+  gitops: { enabled: false },
   secretManagement: { enabled: false },
   assistant: { enabled: false },
   deliveryInsights: { enabled: false },
@@ -58,6 +59,9 @@ export function useOpenChoreoFeatures(): OpenChoreoFeatures {
         },
         authz: {
           enabled: featuresConfig.getOptionalBoolean('authz.enabled') ?? true,
+        },
+        gitops: {
+          enabled: featuresConfig.getOptionalBoolean('gitops.enabled') ?? false,
         },
         secretManagement: {
           enabled:

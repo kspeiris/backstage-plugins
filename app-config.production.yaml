@@ -297,7 +297,7 @@ openchoreo:
       streamTimeoutSeconds: ${OPENCHOREO_OBSERVABILITY_WIRELOGS_STREAM_TIMEOUT_SECONDS}
 
   # Feature flags for enabling/disabling OpenChoreo functionality
-  # Environment variables: OPENCHOREO_FEATURES_WORKFLOWS_ENABLED, OPENCHOREO_FEATURES_OBSERVABILITY_ENABLED, OPENCHOREO_FEATURES_AUTH_ENABLED, OPENCHOREO_FEATURES_AUTHZ_ENABLED, OPENCHOREO_FEATURES_ASSISTANT_ENABLED, OPENCHOREO_FEATURES_COST_INSIGHTS_ENABLED
+  # Environment variables: OPENCHOREO_FEATURES_WORKFLOWS_ENABLED, OPENCHOREO_FEATURES_OBSERVABILITY_ENABLED, OPENCHOREO_FEATURES_AUTH_ENABLED, OPENCHOREO_FEATURES_AUTHZ_ENABLED, OPENCHOREO_FEATURES_ASSISTANT_ENABLED, OPENCHOREO_FEATURES_COST_INSIGHTS_ENABLED, OPENCHOREO_FEATURES_GITOPS_ENABLED
   features:
     # Workflow plane / Workflows functionality
     # When disabled, hides Workflows tab and WorkflowsOverviewCard from entity pages
@@ -313,6 +313,9 @@ openchoreo:
       enabled: ${OPENCHOREO_FEATURES_AUTH_ENABLED}
       # Must match auth.providers.openchoreo-auth.development.scope
       scope: ${OPENCHOREO_AUTH_OIDC_SCOPE}
+    # PR-driven GitOps promotion workflow.
+    gitops:
+      enabled: ${OPENCHOREO_FEATURES_GITOPS_ENABLED}
     # Authorization configuration (Access Control)
     # When disabled, hides Access Control sidebar item and pages
     authz:

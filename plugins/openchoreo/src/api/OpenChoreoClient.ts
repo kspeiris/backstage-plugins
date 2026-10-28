@@ -5,6 +5,7 @@ import {
   CHOREO_ANNOTATIONS,
   type WorkloadResource,
   type ReleaseBindingCondition,
+  type GitOpsChangeStatus,
 } from '@openchoreo/backstage-plugin-common';
 import { CLUSTER_SCOPED_RESOURCE_KINDS } from './OpenChoreoClientApi';
 import type {
@@ -121,6 +122,7 @@ const API_ENDPOINTS = {
   // Cluster/Namespace scoped authorization endpoints
   CLUSTER_ROLES: '/clusterroles',
   CLUSTER_ROLE_BINDINGS: '/clusterrolebindings',
+  GITOPS_STATUS: '/gitops/status',
 } as const;
 
 // ============================================
@@ -289,6 +291,22 @@ export class OpenChoreoClient implements OpenChoreoClientApi {
 
     return this.apiFetch(API_ENDPOINTS.ENVIRONMENT_INFO, {
       params: entityMetadataToParams(metadata),
+    });
+  }
+
+  async fetchGitOpsChangeStatus(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsChangeStatus> {
+    const metadata = extractEntityMetadata(entity);
+
+    return this.apiFetch(API_ENDPOINTS.GITOPS_STATUS, {
+      params: {
+        project: metadata.project,
+        component: metadata.component,
+        environment,
+        namespace: metadata.namespace,
+      },
     });
   }
 

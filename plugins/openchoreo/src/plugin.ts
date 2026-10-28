@@ -82,6 +82,16 @@ export const DeploymentStatusCard = choreoPlugin.provide(
   }),
 );
 
+export const GitOpsStatusCard = choreoPlugin.provide(
+  createComponentExtension({
+    name: 'GitOpsStatusCard',
+    component: {
+      lazy: () =>
+        import('./components/Environments').then(m => m.GitOpsStatusCard),
+    },
+  }),
+);
+
 export const RuntimeHealthCard = choreoPlugin.provide(
   createComponentExtension({
     name: 'RuntimeHealthCard',

@@ -10,6 +10,49 @@ caller's identity provider token to each upstream call.
 This plugin is required by [`@openchoreo/backstage-plugin`](https://www.npmjs.com/package/@openchoreo/backstage-plugin);
 install the two together.
 
+## GitOps change status API
+
+The GitOps tracker stores one promotion record per namespace, project,
+component, and environment in the plugin's Backstage database. The record is
+preserved across backend restarts. The status endpoint refreshes the recorded
+pull request from GitHub and reads the current deployment from OpenChoreo.
+
+GitHub API credentials are resolved from Backstage's `integrations.github`
+configuration. This supports configured GitHub tokens and GitHub App
+credentials. The credential needs permission to read pull requests in the
+configured GitOps repositories; it remains backend-only.
+
+```http
+GET /api/openchoreo/gitops/status?project=default&component=biocare-web&environment=staging
+```
+
+The `namespace` query parameter is optional and defaults to `default`.
+Deployment status is retrieved using the caller's OpenChoreo identity token.
+For a promotion outside the default namespace, pass `namespace` explicitly.
+
+The `promote-openchoreo-component` scaffolder template records the PR it
+creates. To record a PR manually, call the authenticated promotion endpoint:
+
+```http
+POST /api/openchoreo/gitops/promotions
+Content-Type: application/json
+
+{
+  "namespaceName": "default",
+  "projectName": "default",
+  "componentName": "biocare-web",
+  "environment": "staging",
+  "repositoryUrl": "https://github.com/OWNER/REPOSITORY",
+  "pullRequestUrl": "https://github.com/OWNER/REPOSITORY/pull/17"
+}
+```
+
+The tracker validates that the PR URL belongs to the supplied repository and
+derives its number from that URL. The API reports pull-request and deployment
+states separately. Missing promotion records return `NOT_CREATED`; when a
+GitHub refresh fails, the last known PR state is returned with
+`pullRequest.isStale: true` and the timestamp of the last successful check.
+
 ## Installation
 
 ```bash
