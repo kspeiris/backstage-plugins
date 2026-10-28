@@ -8,6 +8,7 @@ import {
 import {
   WorkflowsOverviewCard,
   DeploymentStatusCard,
+  GitOpsStatusCard,
   RuntimeHealthCard,
 } from '../../plugin';
 import { EntityWarningStrip } from './EntityWarningStrip';
@@ -46,6 +47,9 @@ export default function ComponentOverviewLayout({
       </Grid>
       <Grid item md={4} xs={12}>
         <DeploymentStatusCard />
+      </Grid>
+      <Grid item md={4} xs={12}>
+        <GitOpsStatusCard />
       </Grid>
       <FeatureGate feature="observability">
         <Grid item md={4} xs={12}>

@@ -16,6 +16,8 @@
  *       enabled: true
  *     authz:
  *       enabled: true
+ *     gitops:
+ *       enabled: false
  * ```
  */
 export interface OpenChoreoFeatures {
@@ -27,6 +29,8 @@ export interface OpenChoreoFeatures {
   auth: { enabled: boolean };
   /** Authorization feature (Access Control UI) */
   authz: { enabled: boolean };
+  /** PR-driven GitOps promotion workflow. */
+  gitops: { enabled: boolean };
   /** Secret Management UI (Secrets settings tab + APIs) */
   secretManagement: { enabled: boolean };
   /**
@@ -57,6 +61,7 @@ export type FeatureName =
   | 'observability'
   | 'auth'
   | 'authz'
+  | 'gitops'
   | 'secretManagement'
   | 'assistant'
   | 'deliveryInsights'

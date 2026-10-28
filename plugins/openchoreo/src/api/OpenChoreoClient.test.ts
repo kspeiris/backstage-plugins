@@ -113,6 +113,115 @@ describe('OpenChoreoClient — cell diagram', () => {
   });
 });
 
+describe('OpenChoreoClient — GitOps status', () => {
+  const fetchMock = jest.fn();
+  const discovery = { getBaseUrl: jest.fn().mockResolvedValue(BASE_URL) };
+  const fetchApi = { fetch: fetchMock };
+  let client: OpenChoreoClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    discovery.getBaseUrl.mockResolvedValue(BASE_URL);
+    client = new OpenChoreoClient(discovery as any, fetchApi as any);
+  });
+
+  it('fetches status using component, project, namespace, and environment', async () => {
+    const status = {
+      componentName: 'test-component',
+      environment: 'prod/eu',
+      pullRequest: { state: 'MERGED' },
+      deployment: { state: 'SYNC_PENDING' },
+    };
+    fetchMock.mockResolvedValueOnce(makeJsonResponse(status));
+
+    await expect(
+      client.fetchGitOpsChangeStatus(BASE_ENTITY as any, 'prod/eu'),
+    ).resolves.toEqual(status);
+
+    const [calledUrl, opts] = fetchMock.mock.calls[0];
+    expect(calledUrl).toBe(
+      `${BASE_URL}/gitops/status?project=test-project&component=test-component&environment=prod%2Feu&namespace=test-ns`,
+    );
+    expect(opts.method).toBe('GET');
+  });
+
+  it('rejects entities without OpenChoreo identity annotations', async () => {
+    await expect(
+      client.fetchGitOpsChangeStatus(
+        {
+          ...BASE_ENTITY,
+          metadata: { ...BASE_ENTITY.metadata, annotations: {} },
+        } as any,
+        'staging',
+      ),
+    ).rejects.toThrow('Missing required OpenChoreo annotations');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenChoreoClient — GitOps promotion', () => {
+  const fetchMock = jest.fn();
+  const discovery = { getBaseUrl: jest.fn().mockResolvedValue(BASE_URL) };
+  const fetchApi = { fetch: fetchMock };
+  let client: OpenChoreoClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    discovery.getBaseUrl.mockResolvedValue(BASE_URL);
+    client = new OpenChoreoClient(discovery as any, fetchApi as any);
+  });
+
+  it('pins the source environment release to the target release binding', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeJsonResponse({
+        success: true,
+        data: { items: [{ environment: 'dev', releaseName: 'web-v1' }] },
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+    await client.promoteToEnvironment(
+      BASE_ENTITY as any,
+      'dev',
+      'staging',
+      'feature-line',
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/release-bindings?componentName=test-component&projectName=test-project&namespaceName=test-ns&releaseLine=feature-line',
+    );
+
+    const [calledUrl, opts] = fetchMock.mock.calls[1];
+    expect(calledUrl).toContain('/update-release-binding');
+    expect(opts.method).toBe('PUT');
+    expect(JSON.parse(opts.body)).toEqual({
+      namespaceName: 'test-ns',
+      projectName: 'test-project',
+      componentName: 'test-component',
+      environment: 'staging',
+      releaseName: 'web-v1',
+      releaseLine: 'feature-line',
+    });
+  });
+
+  it('fails without updating the target when the source has no release', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeJsonResponse({
+        success: true,
+        data: { items: [{ environment: 'dev' }] },
+      }),
+    );
+
+    await expect(
+      client.promoteToEnvironment(BASE_ENTITY as any, 'dev', 'staging'),
+    ).rejects.toThrow(
+      'Cannot promote to staging: no release is bound to dev.',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('OpenChoreoClient — secrets', () => {
   const fetchMock = jest.fn();
   const discovery = { getBaseUrl: jest.fn().mockResolvedValue(BASE_URL) };

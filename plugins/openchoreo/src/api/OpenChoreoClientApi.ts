@@ -7,6 +7,7 @@ import type {
   ReleaseLineSummary,
   ReleaseLineOverrides,
   ReleaseLineResource,
+  GitOpsChangeStatus,
 } from '@openchoreo/backstage-plugin-common';
 import type { Environment } from '../components/RuntimeLogs/types';
 
@@ -664,6 +665,20 @@ export interface OpenChoreoClientApi {
 
   /** Fetch environment deployment info for an entity */
   fetchEnvironmentInfo(entity: Entity, releaseLine?: string): Promise<any>;
+
+  /** Fetch GitOps pull request and deployment status for an environment */
+  fetchGitOpsChangeStatus(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsChangeStatus>;
+
+  /** Promote a deployment from one environment to another */
+  promoteToEnvironment(
+    entity: Entity,
+    sourceEnvironment: string,
+    targetEnvironment: string,
+    releaseLine?: string,
+  ): Promise<any>;
 
   /** Delete a release binding (undeploy from environment) */
   deleteReleaseBinding(

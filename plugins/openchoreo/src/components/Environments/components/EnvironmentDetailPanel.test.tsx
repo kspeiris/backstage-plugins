@@ -65,6 +65,15 @@ jest.mock('./SetupDetailPane', () => ({
   ),
 }));
 
+jest.mock('./GitOpsChangeStatusPanel', () => ({
+  GitOpsChangeStatusPanel: (props: { refreshKey?: number }) => (
+    <div
+      data-testid="gitops-change-status-panel"
+      data-refresh-key={props.refreshKey}
+    />
+  ),
+}));
+
 // ReleaseManifestDialog uses useApi/useEntity which need provider context
 // these tests don't supply. The dialog has its own focused test file.
 // We capture the onOpenReleaseBrowser prop so tests can drive the pivot
@@ -352,6 +361,10 @@ describe('EnvironmentDetailPanel', () => {
     });
     await user.click(screen.getByLabelText('Refresh environment'));
     expect(props.onRefresh).toHaveBeenCalled();
+    expect(screen.getByTestId('gitops-change-status-panel')).toHaveAttribute(
+      'data-refresh-key',
+      '1',
+    );
   });
 
   it('fires onOpenOverrides from the prominent Configure overrides button', async () => {

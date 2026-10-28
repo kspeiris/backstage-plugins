@@ -25,6 +25,9 @@ import { createNamespaceAction } from './actions/namespace';
 import { createDeploymentPipelineAction } from './actions/deploymentPipeline';
 import { createGitOpsValidateAction } from './actions/gitopsValidate';
 import { createReleaseBindingGenerateAction } from './actions/releaseBindingGenerate';
+import { createGitOpsCheckConflictsAction } from './actions/gitopsCheckConflicts';
+import { createGitOpsResolvePathAction } from './actions/gitopsResolvePath';
+import { createGitOpsTrackPromotionAction } from './actions/gitopsTrackPromotion';
 /**
  * A backend module that registers the actions into the scaffolder
  */
@@ -37,6 +40,7 @@ export const scaffolderModule = createBackendModule({
         scaffolderActions: scaffolderActionsExtensionPoint,
         config: coreServices.rootConfig,
         auth: coreServices.auth,
+        discovery: coreServices.discovery,
         catalog: catalogServiceRef,
         immediateCatalog: immediateCatalogServiceRef,
         annotationStore: annotationStoreRef,
@@ -45,6 +49,7 @@ export const scaffolderModule = createBackendModule({
         scaffolderActions,
         config,
         auth,
+        discovery,
         catalog,
         immediateCatalog,
         annotationStore,
@@ -76,7 +81,10 @@ export const scaffolderModule = createBackendModule({
 
           // PR-driven GitOps MVP
           createGitOpsValidateAction(),
+          createGitOpsResolvePathAction(),
           createReleaseBindingGenerateAction(),
+          createGitOpsCheckConflictsAction(),
+          createGitOpsTrackPromotionAction({ auth, discovery }),
         );
       },
     });

@@ -26,6 +26,7 @@ export function FeatureGatedContent({
       observability: 'Observability',
       auth: 'Authentication',
       authz: 'Authorization',
+      gitops: 'GitOps',
       secretManagement: 'Secret Management',
       assistant: 'Portal Assistant',
       deliveryInsights: 'Delivery Insights',

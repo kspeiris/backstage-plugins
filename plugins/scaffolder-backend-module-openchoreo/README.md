@@ -29,8 +29,14 @@ Platform definitions (namespace-scoped and cluster-scoped):
 GitOps promotion:
 
 - `openchoreo:gitops:validate` — validates the promotion inputs
+- `openchoreo:gitops:resolve-path` — resolves the canonical GitOps manifest path
 - `openchoreo:gitops:releasebinding:generate` — writes the ReleaseBinding that
   promotes a component release to another environment
+- `openchoreo:gitops:check-conflicts` — blocks duplicate promotions when an
+  open GitHub pull request modifies the same manifest path
+- `openchoreo:gitops:track-promotion` — records the created pull request with
+  the OpenChoreo backend so its GitHub lifecycle and merge commit can be shown
+  alongside deployment status
 
 `openchoreo:gitops:releasebinding:generate` calls the OCC CLI
 (`occ releasebinding generate --mode file-system`) against the fetched GitOps

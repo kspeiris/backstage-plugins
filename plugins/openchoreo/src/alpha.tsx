@@ -224,6 +224,15 @@ const deploymentStatusCard = EntityCardBlueprint.make({
   },
 });
 
+const gitOpsStatusCard = EntityCardBlueprint.make({
+  name: 'gitops-status',
+  params: {
+    filter: isOpenChoreoManagedOfKind('component'),
+    loader: () =>
+      import('./components/Environments').then(m => <m.GitOpsStatusCard />),
+  },
+});
+
 // RuntimeHealthCard is observability-gated. FeatureGate (returns null when
 // disabled) is the right wrapper because cards can vanish without breaking
 // any route — unlike EntityContent, which must remain in tree.
@@ -1060,6 +1069,7 @@ export const openChoreoPlugin = createFrontendPlugin({
     releaseLineDefinitionEntityContent,
     componentDeployEntityContent,
     deploymentStatusCard,
+    gitOpsStatusCard,
     runtimeHealthCard,
     projectDeployEntityContent,
     cellDiagramEntityContent,

@@ -10,6 +10,7 @@ import {
   type ReleaseLineSummary,
   type ReleaseLineOverrides,
   type ReleaseLineResource,
+  type GitOpsChangeStatus,
 } from '@openchoreo/backstage-plugin-common';
 import { CLUSTER_SCOPED_RESOURCE_KINDS } from './OpenChoreoClientApi';
 import type {
@@ -127,6 +128,7 @@ const API_ENDPOINTS = {
   // Cluster/Namespace scoped authorization endpoints
   CLUSTER_ROLES: '/clusterroles',
   CLUSTER_ROLE_BINDINGS: '/clusterrolebindings',
+  GITOPS_STATUS: '/gitops/status',
 } as const;
 
 // ============================================
@@ -337,6 +339,53 @@ export class OpenChoreoClient implements OpenChoreoClientApi {
     return this.apiFetch(API_ENDPOINTS.ENVIRONMENT_INFO, {
       params: withReleaseLine(entityMetadataToParams(metadata), releaseLine),
     });
+  }
+
+  async fetchGitOpsChangeStatus(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsChangeStatus> {
+    const metadata = extractEntityMetadata(entity);
+
+    return this.apiFetch(API_ENDPOINTS.GITOPS_STATUS, {
+      params: {
+        project: metadata.project,
+        component: metadata.component,
+        environment,
+        namespace: metadata.namespace,
+      },
+    });
+  }
+
+  async promoteToEnvironment(
+    entity: Entity,
+    sourceEnvironment: string,
+    targetEnvironment: string,
+    releaseLine?: string,
+  ): Promise<any> {
+    const bindingsResponse = await this.fetchReleaseBindings(
+      entity,
+      releaseLine,
+    );
+    const sourceBinding = bindingsResponse.data?.items?.find(
+      binding => binding.environment === sourceEnvironment,
+    );
+
+    if (!sourceBinding?.releaseName) {
+      throw new Error(
+        `Cannot promote to ${targetEnvironment}: no release is bound to ${sourceEnvironment}.`,
+      );
+    }
+
+    return this.updateReleaseBinding(
+      entity,
+      targetEnvironment,
+      sourceBinding.releaseName,
+      undefined,
+      undefined,
+      undefined,
+      releaseLine,
+    );
   }
 
   async deleteReleaseBinding(

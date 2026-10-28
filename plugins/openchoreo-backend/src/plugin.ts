@@ -2,6 +2,10 @@ import {
   coreServices,
   createBackendPlugin,
 } from '@backstage/backend-plugin-api';
+import {
+  DefaultGithubCredentialsProvider,
+  ScmIntegrations,
+} from '@backstage/integration';
 import { createRouter } from './router';
 import { registerExecWebSocketProxy } from './execWebSocketProxy';
 import type { Server } from 'node:http';
@@ -38,6 +42,11 @@ import {
   annotationStoreRef,
   immediateCatalogServiceRef,
 } from '@openchoreo/backstage-plugin-catalog-backend-module';
+import { createGitOpsRouter } from './gitopsRouter';
+import {
+  applyGitOpsChangeTrackerMigrations,
+  GitOpsChangeTrackerService,
+} from './services/GitOpsChangeTrackerService';
 
 /**
  * choreoPlugin backend plugin
@@ -53,6 +62,7 @@ export const choreoPlugin = createBackendPlugin({
         auth: coreServices.auth,
         httpAuth: coreServices.httpAuth,
         httpRouter: coreServices.httpRouter,
+        database: coreServices.database,
         catalog: catalogServiceRef,
         permissions: coreServices.permissions,
         permissionsRegistry: coreServices.permissionsRegistry,
@@ -66,6 +76,7 @@ export const choreoPlugin = createBackendPlugin({
         logger,
         config,
         httpRouter,
+        database,
         tokenService,
         catalog,
         permissionsRegistry,
@@ -177,6 +188,28 @@ export const choreoPlugin = createBackendPlugin({
         const wirelogsInfoService = new WirelogsInfoService(logger, baseUrl);
 
         const versionService = new VersionService(logger, baseUrl);
+
+        const gitopsKnex = await database.getClient();
+        await applyGitOpsChangeTrackerMigrations(gitopsKnex, logger);
+        const githubCredentialsProvider =
+          DefaultGithubCredentialsProvider.fromIntegrations(
+            ScmIntegrations.fromConfig(config),
+          );
+        const gitOpsChangeTrackerService = new GitOpsChangeTrackerService(
+          gitopsKnex,
+          logger,
+          githubCredentialsProvider,
+        );
+
+        httpRouter.use(
+          await createGitOpsRouter({
+            trackerService: gitOpsChangeTrackerService,
+            environmentInfoService,
+            tokenService,
+            authEnabled,
+            logger,
+          }),
+        );
 
         // Register OpenChoreo component permissions with the permissions registry
         // This enables CONDITIONAL permission checks against catalog entities

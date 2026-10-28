@@ -16,9 +16,17 @@ export {
 export { SetupDetailPane, type SetupDetailPaneProps } from './SetupDetailPane';
 export { RemoveDeploymentConfirmationDialog } from './RemoveDeploymentConfirmationDialog';
 export {
+  GitOpsChangeStatusPanel,
+  type GitOpsChangeStatusPanelProps,
+} from './GitOpsChangeStatusPanel';
+export {
   PromotePrimaryAction,
   type PromotePrimaryActionProps,
 } from './PromotePrimaryAction';
+export {
+  PromotionConfirmationPanel,
+  type PromotionConfirmationPanelProps,
+} from './PromotionConfirmationPanel';
 export {
   ReleaseManifestDialog,
   type ReleaseManifestDialogProps,
