@@ -159,7 +159,7 @@ describe('OpenChoreoClient — GitOps status', () => {
   });
 });
 
-describe('OpenChoreoClient — GitOps promotion', () => {
+describe('OpenChoreoClient — GitOps operations', () => {
   const fetchMock = jest.fn();
   const discovery = { getBaseUrl: jest.fn().mockResolvedValue(BASE_URL) };
   const fetchApi = { fetch: fetchMock };
@@ -171,54 +171,117 @@ describe('OpenChoreoClient — GitOps promotion', () => {
     client = new OpenChoreoClient(discovery as any, fetchApi as any);
   });
 
-  it('pins the source environment release to the target release binding', async () => {
-    fetchMock.mockResolvedValueOnce(
-      makeJsonResponse({
-        success: true,
-        data: { items: [{ environment: 'dev', releaseName: 'web-v1' }] },
-      }),
-    );
-    fetchMock.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+  describe('GitOps promotion', () => {
+    it('pins the source environment release to the target release binding', async () => {
+      fetchMock.mockResolvedValueOnce(
+        makeJsonResponse({
+          success: true,
+          data: { items: [{ environment: 'dev', releaseName: 'web-v1' }] },
+        }),
+      );
+      fetchMock.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-    await client.promoteToEnvironment(
-      BASE_ENTITY as any,
-      'dev',
-      'staging',
-      'feature-line',
-    );
+      await client.promoteToEnvironment(
+        BASE_ENTITY as any,
+        'dev',
+        'staging',
+        'feature-line',
+      );
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][0]).toContain(
-      '/release-bindings?componentName=test-component&projectName=test-project&namespaceName=test-ns&releaseLine=feature-line',
-    );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toContain(
+        '/release-bindings?componentName=test-component&projectName=test-project&namespaceName=test-ns&releaseLine=feature-line',
+      );
 
-    const [calledUrl, opts] = fetchMock.mock.calls[1];
-    expect(calledUrl).toContain('/update-release-binding');
-    expect(opts.method).toBe('PUT');
-    expect(JSON.parse(opts.body)).toEqual({
-      namespaceName: 'test-ns',
-      projectName: 'test-project',
-      componentName: 'test-component',
-      environment: 'staging',
-      releaseName: 'web-v1',
-      releaseLine: 'feature-line',
+      const [calledUrl, opts] = fetchMock.mock.calls[1];
+      expect(calledUrl).toContain('/update-release-binding');
+      expect(opts.method).toBe('PUT');
+      expect(JSON.parse(opts.body)).toEqual({
+        namespaceName: 'test-ns',
+        projectName: 'test-project',
+        componentName: 'test-component',
+        environment: 'staging',
+        releaseName: 'web-v1',
+        releaseLine: 'feature-line',
+      });
+    });
+
+    it('fails without updating the target when the source has no release', async () => {
+      fetchMock.mockResolvedValueOnce(
+        makeJsonResponse({
+          success: true,
+          data: { items: [{ environment: 'dev' }] },
+        }),
+      );
+
+      await expect(
+        client.promoteToEnvironment(BASE_ENTITY as any, 'dev', 'staging'),
+      ).rejects.toThrow(
+        'Cannot promote to staging: no release is bound to dev.',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('fails without updating the target when the source has no release', async () => {
-    fetchMock.mockResolvedValueOnce(
-      makeJsonResponse({
-        success: true,
-        data: { items: [{ environment: 'dev' }] },
-      }),
-    );
+  describe('GitOps override preview', () => {
+    it('fetches ownership using component identity and the environment', async () => {
+      const ownership = {
+        namespaceName: 'test-ns',
+        projectName: 'test-project',
+        componentName: 'test-component',
+        environment: 'staging',
+        ownership: 'GITOPS_MANAGED',
+        repositoryConfigured: true,
+      };
+      fetchMock.mockResolvedValueOnce(makeJsonResponse(ownership));
 
-    await expect(
-      client.promoteToEnvironment(BASE_ENTITY as any, 'dev', 'staging'),
-    ).rejects.toThrow(
-      'Cannot promote to staging: no release is bound to dev.',
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(
+        client.fetchGitOpsOwnership(BASE_ENTITY as any, 'staging'),
+      ).resolves.toEqual(ownership);
+
+      const [calledUrl, opts] = fetchMock.mock.calls[0];
+      expect(calledUrl).toBe(
+        `${BASE_URL}/gitops/ownership?namespaceName=test-ns&project=test-project&component=test-component&environment=staging`,
+      );
+      expect(opts.method ?? 'GET').toBe('GET');
+    });
+
+    it('POSTs typed overrides without accepting repository paths from the caller', async () => {
+      const preview = {
+        valid: true,
+        ownership: 'GITOPS_MANAGED',
+        repository: 'acme/gitops',
+        repositoryOwner: 'acme',
+        repositoryName: 'gitops',
+        baseBranch: 'main',
+        manifestPath: 'projects/test/release-bindings/test-staging.yaml',
+        originalSha: '0123456789abcdef0123456789abcdef01234567',
+        originalManifest: 'old yaml',
+        proposedManifest: 'new yaml',
+        diff: '--- original\\n+++ proposed',
+        changed: true,
+      };
+      fetchMock.mockResolvedValueOnce(makeJsonResponse(preview));
+
+      await expect(
+        client.previewGitOpsOverrides(BASE_ENTITY as any, 'staging', {
+          workloadOverrides: { replicas: 4 },
+        }),
+      ).resolves.toEqual(preview);
+
+      const [calledUrl, opts] = fetchMock.mock.calls[0];
+      expect(calledUrl).toBe(`${BASE_URL}/gitops/overrides/preview`);
+      expect(opts.method).toBe('POST');
+      expect(JSON.parse(opts.body)).toEqual({
+        namespace: 'test-ns',
+        project: 'test-project',
+        component: 'test-component',
+        environment: 'staging',
+        overrides: { workloadOverrides: { replicas: 4 } },
+      });
+      expect(JSON.parse(opts.body)).not.toHaveProperty('repository');
+      expect(JSON.parse(opts.body)).not.toHaveProperty('manifestPath');
+    });
   });
 });
 

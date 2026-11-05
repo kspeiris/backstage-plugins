@@ -15,6 +15,11 @@ export type DeploymentState =
   | 'FAILED'
   | 'UNKNOWN';
 
+export type GitOpsOwnershipState =
+  | 'GITOPS_MANAGED'
+  | 'API_MANAGED'
+  | 'UNKNOWN';
+
 export type GitOpsDiagnosticSource =
   | 'GitHub'
   | 'Flux CD'
@@ -51,4 +56,37 @@ export interface GitOpsChangeStatus {
 
   diagnostics?: GitOpsStatusDiagnostic[];
   lastCheckedAt?: string;
+}
+
+export interface GitOpsTargetCoordinates {
+  namespaceName: string;
+  projectName: string;
+  componentName: string;
+  environment: string;
+}
+
+export interface GitOpsTargetConfig extends GitOpsTargetCoordinates {
+  repositoryProvider: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  repository: string;
+  baseBranch: string;
+  manifestPath: string;
+  updatedAt?: string;
+}
+
+export interface GitOpsOwnership {
+  namespaceName: string;
+  projectName: string;
+  componentName: string;
+  environment: string;
+  ownership: GitOpsOwnershipState;
+  repositoryProvider?: string;
+  repositoryOwner?: string;
+  repositoryName?: string;
+  repository?: string;
+  baseBranch?: string;
+  manifestPath?: string;
+  repositoryConfigured?: boolean;
+  updatedAt?: string;
 }

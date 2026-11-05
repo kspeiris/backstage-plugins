@@ -372,6 +372,26 @@ openchoreo:
     gitops:
       enabled: ${OPENCHOREO_FEATURES_GITOPS_ENABLED}
 
+  # Ownership administration is independent from the GitOps feature flag.
+  # Use fully qualified Backstage entity refs for trusted administrators.
+  gitops:
+    admins:
+      users: []
+      groups: []
+    # Seed records are inserted only when their resource key has no DB record.
+    # Runtime PUT/DELETE decisions are preserved across backend restarts.
+    bootstrapMappings:
+      - namespaceName: default
+        projectName: default
+        componentName: biocare-web
+        environment: staging
+        ownership: GITOPS_MANAGED
+        repositoryProvider: github
+        repositoryOwner: kspeiris
+        repositoryName: openchoreo-gitops_test
+        baseBranch: main
+        manifestPath: projects/default/components/biocare-web/release-bindings/biocare-web-staging.yaml
+
   # Component Type Mappings (optional - defaults provided)
   # Maps OpenChoreo component types to Backstage page variants
   # Custom mappings are evaluated before defaults

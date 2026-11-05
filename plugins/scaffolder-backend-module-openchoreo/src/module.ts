@@ -28,6 +28,7 @@ import { createReleaseBindingGenerateAction } from './actions/releaseBindingGene
 import { createGitOpsCheckConflictsAction } from './actions/gitopsCheckConflicts';
 import { createGitOpsResolvePathAction } from './actions/gitopsResolvePath';
 import { createGitOpsTrackPromotionAction } from './actions/gitopsTrackPromotion';
+import { createGitOpsPatchBindingAction } from './actions/gitopsPatchBinding';
 /**
  * A backend module that registers the actions into the scaffolder
  */
@@ -82,6 +83,7 @@ export const scaffolderModule = createBackendModule({
           // PR-driven GitOps MVP
           createGitOpsValidateAction(),
           createGitOpsResolvePathAction(),
+          createGitOpsPatchBindingAction(),
           createReleaseBindingGenerateAction(),
           createGitOpsCheckConflictsAction(),
           createGitOpsTrackPromotionAction({ auth, discovery }),

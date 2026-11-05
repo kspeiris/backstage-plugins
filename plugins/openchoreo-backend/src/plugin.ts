@@ -47,6 +47,27 @@ import {
   applyGitOpsChangeTrackerMigrations,
   GitOpsChangeTrackerService,
 } from './services/GitOpsChangeTrackerService';
+import {
+  applyGitOpsOwnershipMigrations,
+  GitOpsOwnershipService,
+  readGitOpsOwnershipBootstrapMappings,
+} from './services/GitOpsOwnershipService';
+import {
+  applyGitOpsTargetMigrations,
+  GitOpsTargetConfigurationService,
+  readGitOpsTargetBootstrapMappings,
+} from './services/GitOpsTargetConfigurationService';
+import {
+  createGitOpsOverridePreviewService,
+} from './services/GitOpsOverridePreviewService';
+import {
+  createGitOpsOverridePullRequestService,
+} from './services/GitOpsOverridePullRequestService';
+import {
+  applyGitOpsOverridePRIdempotencyMigrations,
+  GitOpsOverridePRIdempotencyService,
+} from './services/GitOpsOverridePRIdempotencyService';
+import { createGitOpsAdminAuthorizationService } from './services/GitOpsAdminAuthorizationService';
 
 /**
  * choreoPlugin backend plugin
@@ -77,6 +98,7 @@ export const choreoPlugin = createBackendPlugin({
         config,
         httpRouter,
         database,
+        httpAuth,
         tokenService,
         catalog,
         permissionsRegistry,
@@ -191,6 +213,7 @@ export const choreoPlugin = createBackendPlugin({
 
         const gitopsKnex = await database.getClient();
         await applyGitOpsChangeTrackerMigrations(gitopsKnex, logger);
+        await applyGitOpsOwnershipMigrations(gitopsKnex, logger);
         const githubCredentialsProvider =
           DefaultGithubCredentialsProvider.fromIntegrations(
             ScmIntegrations.fromConfig(config),
@@ -200,10 +223,49 @@ export const choreoPlugin = createBackendPlugin({
           logger,
           githubCredentialsProvider,
         );
+        const gitOpsOwnershipService = new GitOpsOwnershipService(gitopsKnex);
+        const gitOpsTargetService = new GitOpsTargetConfigurationService(gitopsKnex);
+        await applyGitOpsTargetMigrations(gitopsKnex, logger);
+        const gitOpsOverridePreviewService = createGitOpsOverridePreviewService({
+          logger,
+          targetService: gitOpsTargetService,
+          githubCredentialsProvider,
+        });
+        await applyGitOpsOverridePRIdempotencyMigrations(gitopsKnex, logger);
+        const gitOpsOverridePRIdempotencyService = new GitOpsOverridePRIdempotencyService(gitopsKnex);
+        const gitOpsOverridePullRequestService = createGitOpsOverridePullRequestService({
+          logger,
+          targetService: gitOpsTargetService,
+          githubCredentialsProvider,
+          idempotencyService: gitOpsOverridePRIdempotencyService,
+        });
+        const gitopsManagementConfig =
+          openchoreoConfig.getOptionalConfig('gitops');
+        const gitOpsAdminAuthorizationService =
+          createGitOpsAdminAuthorizationService(gitopsManagementConfig);
+        const bootstrapMappings = readGitOpsOwnershipBootstrapMappings(
+          gitopsManagementConfig,
+        );
+        await gitOpsOwnershipService.bootstrapOwnershipMappings(
+          bootstrapMappings,
+        );
+        const targetBootstrapMappings = readGitOpsTargetBootstrapMappings(
+          gitopsManagementConfig,
+        );
+        await gitOpsTargetService.bootstrapTargetMappings(
+          targetBootstrapMappings,
+        );
 
         httpRouter.use(
           await createGitOpsRouter({
             trackerService: gitOpsChangeTrackerService,
+            ownershipService: gitOpsOwnershipService,
+            targetService: gitOpsTargetService,
+            overridePreviewService: gitOpsOverridePreviewService,
+            overridePullRequestService: gitOpsOverridePullRequestService,
+            idempotencyService: gitOpsOverridePRIdempotencyService,
+            httpAuth,
+            adminAuthorizationService: gitOpsAdminAuthorizationService,
             environmentInfoService,
             tokenService,
             authEnabled,
@@ -264,6 +326,7 @@ export const choreoPlugin = createBackendPlugin({
 
         httpRouter.use(
           await createRouter({
+            gitOpsOwnershipService,
             environmentInfoService,
             cellDiagramInfoService,
             buildInfoService,

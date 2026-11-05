@@ -8,6 +8,8 @@ import type {
   ReleaseLineOverrides,
   ReleaseLineResource,
   GitOpsChangeStatus,
+  GitOpsOwnership,
+  GitOpsOwnershipState,
 } from '@openchoreo/backstage-plugin-common';
 import type { Environment } from '../components/RuntimeLogs/types';
 
@@ -671,6 +673,26 @@ export interface OpenChoreoClientApi {
     entity: Entity,
     environment: string,
   ): Promise<GitOpsChangeStatus>;
+
+  /** Fetch the authoritative GitOps ownership mapping for a component environment */
+  fetchGitOpsOwnership(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsOwnership>;
+
+  /** Preview component ReleaseBinding overrides without writing to GitHub */
+  previewGitOpsOverrides(
+    entity: Entity,
+    environment: string,
+    overrides: GitOpsOverrideSections,
+  ): Promise<GitOpsOverridePreview>;
+
+  /** Create a GitOps override pull request */
+  createGitOpsOverridePullRequest(
+    entity: Entity,
+    environment: string,
+    request: GitOpsOverridePullRequestRequest,
+  ): Promise<GitOpsOverridePullRequestResponse>;
 
   /** Promote a deployment from one environment to another */
   promoteToEnvironment(
@@ -1349,6 +1371,54 @@ export interface OpenChoreoClientApi {
     namespace: string,
     name: string,
   ): Promise<RoleBindingsLookup>;
+}
+
+export interface GitOpsOverrideSections {
+  componentTypeEnvironmentConfigs?: Record<string, unknown>;
+  traitEnvironmentConfigs?: Record<string, unknown>;
+  workloadOverrides?: Record<string, unknown>;
+}
+
+export interface GitOpsOverridePreview {
+  valid: boolean;
+  repository: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  baseBranch: string;
+  manifestPath: string;
+  originalSha: string;
+  originalManifest: string;
+  proposedManifest: string;
+  diff: string;
+  changed: boolean;
+  error?: string;
+}
+
+export interface GitOpsOverridePullRequestRequest {
+  componentTypeEnvironmentConfigs?: Record<string, unknown>;
+  traitEnvironmentConfigs?: Record<string, unknown>;
+  workloadOverrides?: Record<string, unknown>;
+  expectedSha: string;
+  title?: string;
+  description?: string;
+  idempotencyKey?: string;
+}
+
+export interface GitOpsOverridePullRequest {
+  number: number;
+  title: string;
+  url: string;
+  branch?: string;
+  baseBranch?: string;
+  commitSha?: string;
+}
+
+export interface GitOpsOverridePullRequestResponse {
+  success: boolean;
+  changed?: boolean;
+  pullRequest?: GitOpsOverridePullRequest;
+  message?: string;
+  error?: string;
 }
 
 // ============================================

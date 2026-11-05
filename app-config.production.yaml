@@ -369,6 +369,25 @@ openchoreo:
     costInsights:
       enabled: ${OPENCHOREO_FEATURES_COST_INSIGHTS_ENABLED}
 
+  # Ownership administration is independent from the GitOps feature flag.
+  # Configure fully qualified Backstage entity refs for trusted admins.
+  gitops:
+    admins:
+      users: []
+      groups: []
+    # Seed mappings are insert-only; runtime changes and deletion tombstones
+    # are retained in the Backstage database after restart.
+    bootstrapMappings:
+      - namespaceName: default
+        projectName: default
+        componentName: biocare-web
+        environment: staging
+        repositoryProvider: github
+        repositoryOwner: kspeiris
+        repositoryName: openchoreo-gitops_test
+        baseBranch: main
+        manifestPath: projects/default/components/biocare-web/release-bindings/biocare-web-staging.yaml
+
 thunder:
   # Environment variables are injected by Helm chart (see https://github.com/openchoreo/openchoreo install/helm/openchoreo/templates/backstage/deployment.yaml)
   # THUNDER_BASE_URL: set via backstage.thunder.baseUrl in Helm values (e.g., https://idp.example.com)

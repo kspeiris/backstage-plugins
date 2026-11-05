@@ -4,7 +4,11 @@ import request from 'supertest';
 import type { OpenChoreoTokenService } from '@openchoreo/openchoreo-auth';
 import type { EnvironmentInfoService } from './services/EnvironmentService/EnvironmentInfoService';
 import type { GitOpsChangeTrackerService } from './services/GitOpsChangeTrackerService';
+import type { GitOpsOwnershipService } from './services/GitOpsOwnershipService';
+import type { GitOpsOverridePreviewService } from './services/GitOpsOverridePreviewService';
+import type { GitOpsTargetConfigurationService } from './services/GitOpsTargetConfigurationService';
 import { createGitOpsRouter } from './gitopsRouter';
+import { GitOpsAdminAuthorizationService } from './services/GitOpsAdminAuthorizationService';
 
 jest.mock('@openchoreo/openchoreo-auth', () => ({
   createUserTokenMiddleware: jest.fn(
@@ -17,17 +21,48 @@ jest.mock('@openchoreo/openchoreo-auth', () => ({
 }));
 
 describe('GitOps status API', () => {
+  let userPrincipal: {
+    userEntityRef: string;
+    ownershipEntityRefs: string[];
+  };
   const trackerService = {
     recordPromotion: jest.fn(),
     getPullRequestStatus: jest.fn(),
   } as unknown as GitOpsChangeTrackerService;
+  const ownershipService = {
+    getOwnership: jest.fn(),
+    createOwnership: jest.fn(),
+    updateOwnership: jest.fn(),
+    deleteOwnership: jest.fn(),
+  } as unknown as GitOpsOwnershipService;
+  const targetService = {
+    getTarget: jest.fn(),
+    createTarget: jest.fn(),
+    updateTarget: jest.fn(),
+    deleteTarget: jest.fn(),
+  } as unknown as GitOpsTargetConfigurationService;
   const environmentInfoService = {
     fetchDeploymentInfo: jest.fn(),
   } as unknown as EnvironmentInfoService;
+  const overridePreviewService = {
+    preview: jest.fn(),
+  } as unknown as GitOpsOverridePreviewService;
 
   async function createApp() {
     const router = await createGitOpsRouter({
       trackerService,
+      ownershipService,
+      targetService,
+      overridePreviewService,
+      httpAuth: {
+        credentials: jest.fn().mockImplementation(async () => ({
+          principal: userPrincipal,
+        })),
+      } as never,
+      adminAuthorizationService: new GitOpsAdminAuthorizationService(
+        ['user:default/admin@example.com'],
+        ['group:default/platform-admins'],
+      ),
       environmentInfoService,
       tokenService: {} as OpenChoreoTokenService,
       authEnabled: true,
@@ -43,6 +78,10 @@ describe('GitOps status API', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    userPrincipal = {
+      userEntityRef: 'user:default/developer@example.com',
+      ownershipEntityRefs: ['user:default/developer@example.com'],
+    };
   });
 
   it('returns PR and live deployment states for a component environment', async () => {
@@ -276,6 +315,226 @@ describe('GitOps status API', () => {
     ]);
   });
 
+  it('returns GitOps ownership metadata for a resource', async () => {
+    ownershipService.getOwnership = jest.fn().mockResolvedValue({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'GITOPS_MANAGED',
+      repositoryProvider: 'github',
+      repositoryOwner: 'kspeiris',
+      repositoryName: 'openchoreo-gitops_test',
+      repository: 'kspeiris/openchoreo-gitops_test',
+      baseBranch: 'main',
+      manifestPath:
+        'projects/default/components/biocare-web/release-bindings/biocare-web-staging.yaml',
+      repositoryConfigured: true,
+      updatedAt: '2026-10-28T04:30:00.000Z',
+    });
+
+    const response = await request(await createApp())
+      .get('/gitops/ownership')
+      .query({
+        project: 'biocare',
+        component: 'biocare-web',
+        environment: 'staging',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ownership: 'GITOPS_MANAGED',
+      repositoryConfigured: true,
+      repository: 'kspeiris/openchoreo-gitops_test',
+      baseBranch: 'main',
+      manifestPath:
+        'projects/default/components/biocare-web/release-bindings/biocare-web-staging.yaml',
+    });
+    expect(ownershipService.getOwnership).toHaveBeenCalledWith({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+    });
+  });
+
+  it('accepts the documented preview request and returns the preview response', async () => {
+    overridePreviewService.preview = jest.fn().mockResolvedValue({
+      valid: true,
+      repository: 'openchoreo/gitops',
+      repositoryOwner: 'openchoreo',
+      repositoryName: 'gitops',
+      baseBranch: 'main',
+      manifestPath:
+        'projects/default/components/web/release-bindings/web-staging.yaml',
+      originalSha: '0123456789abcdef0123456789abcdef01234567',
+      originalManifest: 'original',
+      proposedManifest: 'proposed',
+      diff: '--- original\n+++ proposed',
+      changed: true,
+    });
+
+    const response = await request(await createApp())
+      .post('/gitops/overrides/preview')
+      .send({
+        namespace: 'default',
+        project: 'default',
+        component: 'web',
+        environment: 'staging',
+        overrides: { workloadOverrides: { replicas: 4 } },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.originalSha).toBe(
+      '0123456789abcdef0123456789abcdef01234567',
+    );
+    expect(overridePreviewService.preview).toHaveBeenCalledWith({
+      namespaceName: 'default',
+      projectName: 'default',
+      componentName: 'web',
+      environment: 'staging',
+      overrides: { workloadOverrides: { replicas: 4 } },
+    });
+  });
+
+  it('rejects unknown override sections before calling the preview service', async () => {
+    const response = await request(await createApp())
+      .post('/gitops/overrides/preview')
+      .send({
+        namespace: 'default',
+        project: 'default',
+        component: 'web',
+        environment: 'staging',
+        overrides: { repositoryPath: 'untrusted/path.yaml' },
+      });
+
+    expect(response.status).toBe(400);
+    expect(overridePreviewService.preview).not.toHaveBeenCalled();
+  });
+
+  it('allows only configured admins to create ownership mappings', async () => {
+    ownershipService.createOwnership = jest.fn().mockResolvedValue({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'API_MANAGED',
+      repositoryConfigured: false,
+      updatedAt: '2026-10-28T04:30:00.000Z',
+    });
+
+    const body = {
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'API_MANAGED',
+    };
+    const deniedResponse = await request(await createApp())
+      .post('/gitops/ownership')
+      .send(body);
+
+    expect(deniedResponse.status).toBe(403);
+    expect(ownershipService.createOwnership).not.toHaveBeenCalled();
+
+    userPrincipal = {
+      userEntityRef: 'user:default/admin@example.com',
+      ownershipEntityRefs: ['user:default/admin@example.com'],
+    };
+    const response = await request(await createApp())
+      .post('/gitops/ownership')
+      .send(body);
+
+    expect(response.status).toBe(201);
+    expect(ownershipService.createOwnership).toHaveBeenCalledWith({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'API_MANAGED',
+      repositoryProvider: 'github',
+      repositoryOwner: undefined,
+      repositoryName: undefined,
+      baseBranch: undefined,
+      manifestPath: undefined,
+    });
+  });
+
+  it('authorizes configured admin groups and restricts PUT and DELETE to admins', async () => {
+    const mapping = {
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'API_MANAGED',
+    };
+    const deniedUpdateResponse = await request(await createApp())
+      .put('/gitops/ownership')
+      .send(mapping);
+    const deniedDeleteResponse = await request(await createApp())
+      .delete('/gitops/ownership')
+      .send(mapping);
+
+    expect(deniedUpdateResponse.status).toBe(403);
+    expect(deniedDeleteResponse.status).toBe(403);
+    expect(ownershipService.updateOwnership).not.toHaveBeenCalled();
+    expect(ownershipService.deleteOwnership).not.toHaveBeenCalled();
+
+    userPrincipal = {
+      userEntityRef: 'user:default/developer@example.com',
+      ownershipEntityRefs: [
+        'user:default/developer@example.com',
+        'group:default/platform-admins',
+      ],
+    };
+    ownershipService.updateOwnership = jest.fn().mockResolvedValue({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+      environment: 'staging',
+      ownership: 'API_MANAGED',
+    });
+    ownershipService.deleteOwnership = jest.fn().mockResolvedValue(undefined);
+
+    const updateResponse = await request(await createApp())
+      .put('/gitops/ownership')
+      .send(mapping);
+    const deleteResponse = await request(await createApp())
+      .delete('/gitops/ownership')
+      .send(mapping);
+
+    expect(updateResponse.status).toBe(200);
+    expect(deleteResponse.status).toBe(204);
+    expect(ownershipService.updateOwnership).toHaveBeenCalled();
+    expect(ownershipService.deleteOwnership).toHaveBeenCalledWith({
+      namespaceName: mapping.namespaceName,
+      projectName: mapping.projectName,
+      componentName: mapping.componentName,
+      environment: mapping.environment,
+    });
+  });
+
+  it('keeps UNKNOWN ownership for unmapped resources', async () => {
+    ownershipService.getOwnership = jest
+      .fn()
+      .mockImplementation(async input => ({
+        ...input,
+        ownership: 'UNKNOWN',
+        repositoryConfigured: false,
+      }));
+
+    const response = await request(await createApp())
+      .get('/gitops/ownership')
+      .query({
+        project: 'unmapped-project',
+        component: 'unmapped-component',
+        environment: 'dev',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.ownership).toBe('UNKNOWN');
+  });
+
   it('validates required status query parameters', async () => {
     const response = await request(await createApp()).get('/gitops/status');
 
@@ -326,5 +585,103 @@ describe('GitOps status API', () => {
       'pullRequestUrl must identify a pull request in repositoryUrl',
     );
     expect(trackerService.recordPromotion).not.toHaveBeenCalled();
+  });
+
+  describe('GitOps targets API', () => {
+    const mockTarget = {
+      namespaceName: 'default',
+      projectName: 'payments',
+      componentName: 'checkout',
+      environment: 'staging',
+      repositoryProvider: 'github',
+      repositoryOwner: 'acme',
+      repositoryName: 'gitops-repo',
+      repository: 'acme/gitops-repo',
+      baseBranch: 'main',
+      manifestPath: 'manifests/checkout-staging.yaml',
+    };
+
+    it('returns target configuration for a resource', async () => {
+      userPrincipal = {
+        userEntityRef: 'user:default/developer',
+        ownershipEntityRefs: [],
+      };
+      (targetService.getTarget as jest.Mock).mockResolvedValueOnce(mockTarget);
+
+      const response = await request(await createApp())
+        .get('/gitops/targets')
+        .query({
+          project: 'payments',
+          component: 'checkout',
+          environment: 'staging',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(mockTarget);
+      expect(targetService.getTarget).toHaveBeenCalledWith({
+        namespaceName: 'default',
+        projectName: 'payments',
+        componentName: 'checkout',
+        environment: 'staging',
+      });
+    });
+
+    it('allows only configured admins to create target configurations', async () => {
+      userPrincipal = {
+        userEntityRef: 'user:default/regular-dev',
+        ownershipEntityRefs: [],
+      };
+
+      const response = await request(await createApp())
+        .post('/gitops/targets')
+        .send(mockTarget);
+
+      expect(response.status).toBe(403);
+      expect(targetService.createTarget).not.toHaveBeenCalled();
+
+      userPrincipal = {
+        userEntityRef: 'user:default/admin@example.com',
+        ownershipEntityRefs: [],
+      };
+      (targetService.createTarget as jest.Mock).mockResolvedValueOnce(mockTarget);
+
+      const adminResponse = await request(await createApp())
+        .post('/gitops/targets')
+        .send(mockTarget);
+
+      expect(adminResponse.status).toBe(201);
+      expect(adminResponse.body).toEqual(mockTarget);
+    });
+
+    it('authorizes configured admin groups for PUT and DELETE /gitops/targets', async () => {
+      userPrincipal = {
+        userEntityRef: 'user:default/team-lead',
+        ownershipEntityRefs: ['group:default/platform-admins'],
+      };
+      (targetService.updateTarget as jest.Mock).mockResolvedValueOnce(mockTarget);
+
+      const putResponse = await request(await createApp())
+        .put('/gitops/targets')
+        .send(mockTarget);
+
+      expect(putResponse.status).toBe(200);
+
+      const deleteResponse = await request(await createApp())
+        .delete('/gitops/targets')
+        .send({
+          namespaceName: 'default',
+          projectName: 'payments',
+          componentName: 'checkout',
+          environment: 'staging',
+        });
+
+      expect(deleteResponse.status).toBe(204);
+      expect(targetService.deleteTarget).toHaveBeenCalledWith({
+        namespaceName: 'default',
+        projectName: 'payments',
+        componentName: 'checkout',
+        environment: 'staging',
+      });
+    });
   });
 });

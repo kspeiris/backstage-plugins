@@ -11,6 +11,7 @@ import {
   type ReleaseLineOverrides,
   type ReleaseLineResource,
   type GitOpsChangeStatus,
+  type GitOpsOwnership,
 } from '@openchoreo/backstage-plugin-common';
 import { CLUSTER_SCOPED_RESOURCE_KINDS } from './OpenChoreoClientApi';
 import type {
@@ -53,6 +54,10 @@ import type {
   PodLogsResponse,
   ResourceEnvironment,
   ResourceTypeOutput,
+  GitOpsOverridePullRequestRequest,
+  GitOpsOverridePullRequestResponse,
+  GitOpsOverrideSections,
+  GitOpsOverridePreview,
 } from './OpenChoreoClientApi';
 import type { Environment } from '../components/RuntimeLogs/types';
 
@@ -129,6 +134,9 @@ const API_ENDPOINTS = {
   CLUSTER_ROLES: '/clusterroles',
   CLUSTER_ROLE_BINDINGS: '/clusterrolebindings',
   GITOPS_STATUS: '/gitops/status',
+  GITOPS_OWNERSHIP: '/gitops/ownership',
+  GITOPS_OVERRIDE_PREVIEW: '/gitops/overrides/preview',
+  GITOPS_OVERRIDE_PULL_REQUEST: '/gitops/overrides/pull-request',
 } as const;
 
 // ============================================
@@ -355,6 +363,72 @@ export class OpenChoreoClient implements OpenChoreoClientApi {
         namespace: metadata.namespace,
       },
     });
+  }
+
+  async fetchGitOpsOwnership(
+    entity: Entity,
+    environment: string,
+  ): Promise<GitOpsOwnership> {
+    const metadata = extractEntityMetadata(entity);
+
+    return this.apiFetch<GitOpsOwnership>(API_ENDPOINTS.GITOPS_OWNERSHIP, {
+      params: {
+        namespaceName: metadata.namespace,
+        project: metadata.project,
+        component: metadata.component,
+        environment,
+      },
+    });
+  }
+
+  async previewGitOpsOverrides(
+    entity: Entity,
+    environment: string,
+    overrides: GitOpsOverrideSections,
+  ): Promise<GitOpsOverridePreview> {
+    const metadata = extractEntityMetadata(entity);
+
+    return this.apiFetch<GitOpsOverridePreview>(
+      API_ENDPOINTS.GITOPS_OVERRIDE_PREVIEW,
+      {
+        method: 'POST',
+        body: {
+          namespace: metadata.namespace,
+          project: metadata.project,
+          component: metadata.component,
+          environment,
+          overrides,
+        },
+      },
+    );
+  }
+
+  async createGitOpsOverridePullRequest(
+    entity: Entity,
+    environment: string,
+    request: GitOpsOverridePullRequestRequest,
+  ): Promise<GitOpsOverridePullRequestResponse> {
+    const metadata = extractEntityMetadata(entity);
+
+    return this.apiFetch<GitOpsOverridePullRequestResponse>(
+      API_ENDPOINTS.GITOPS_OVERRIDE_PULL_REQUEST,
+      {
+        method: 'POST',
+        body: {
+          namespace: metadata.namespace,
+          project: metadata.project,
+          component: metadata.component,
+          environment,
+          componentTypeEnvironmentConfigs: request.componentTypeEnvironmentConfigs,
+          traitEnvironmentConfigs: request.traitEnvironmentConfigs,
+          workloadOverrides: request.workloadOverrides,
+          expectedSha: request.expectedSha,
+          title: request.title,
+          description: request.description,
+          idempotencyKey: request.idempotencyKey,
+        },
+      },
+    );
   }
 
   async promoteToEnvironment(

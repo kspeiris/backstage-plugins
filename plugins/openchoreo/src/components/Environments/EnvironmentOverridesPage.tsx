@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -12,18 +12,16 @@ import { Entity } from '@backstage/catalog-model';
 import { useApi } from '@backstage/core-plugin-api';
 import { openChoreoClientApiRef } from '../../api/OpenChoreoClientApi';
 import { makeStyles } from '@material-ui/core/styles';
-import { isForbiddenError, getErrorMessage } from '../../utils/errorUtils';
+import { getErrorMessage } from '../../utils/errorUtils';
 import { OverrideContent } from './OverrideContent';
 import { useOverrideChanges } from './hooks/useOverrideChanges';
 import { useOverridesData } from './hooks/useOverridesData';
 import { ComponentReleaseDiffDialog } from './components/ComponentReleaseDiffDialog';
-import { SaveConfirmationDialog } from './SaveConfirmationDialog';
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog';
 import {
   UnsavedChangesDialog,
   useUrlSyncedTab,
   DetailPageLayout,
-  useDeployPermission,
 } from '@openchoreo/backstage-plugin-react';
 import {
   calculateHasOverrides,
@@ -42,10 +40,15 @@ import { ContainerContent } from './Workload/WorkloadEditor';
 import {
   useSecretReferences,
   filterSecretReferencesForEnvDataPlane,
-  useReleaseLine,
 } from '@openchoreo/backstage-plugin-react';
 import type { EnvVar } from '@openchoreo/backstage-plugin-common';
 import { TraitParameters } from './TraitParameters';
+import {
+  GitOpsOverridePreview,
+  GitOpsOverridePullRequestResponse,
+} from '../../api/OpenChoreoClientApi';
+import { YamlDiffViewer } from '@openchoreo/backstage-plugin-react';
+import LaunchIcon from '@material-ui/icons/Launch';
 
 const useStyles = makeStyles(theme => ({
   loadingContainer: {
@@ -78,7 +81,7 @@ interface EnvironmentOverridesPageProps {
   environment: Environment;
   entity: Entity;
   onBack: () => void;
-  onSaved: () => void;
+  onSaved?: () => void;
   /** Pending action to execute after saving overrides */
   pendingAction?: PendingAction;
   /** Callback when overrides are saved and pending action should be executed */
@@ -95,42 +98,53 @@ export const EnvironmentOverridesPage = ({
   environment,
   entity,
   onBack,
-  onSaved,
+  onSaved: _onSaved,
   pendingAction,
-  onPendingActionComplete,
+  onPendingActionComplete: _onPendingActionComplete,
   onPrevious,
   initialTab,
   onTabChange,
 }: EnvironmentOverridesPageProps) => {
   const classes = useStyles();
   const client = useApi(openChoreoClientApiRef);
-  const { releaseLine } = useReleaseLine();
 
   const [traitTypeMap, setTraitTypeMap] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<
     'all' | 'component' | string | null
   >(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] =
     useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+
+  // GitOps preview state
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] =
+    useState<GitOpsOverridePreview | null>(null);
+
+  // Snapshot of form values at the time the last preview was generated.
+  // If the current form values diverge from this snapshot the preview is stale.
+  const previewSnapshot = useRef<{
+    componentTypeFormData: any;
+    traitFormDataMap: any;
+    workloadFormData: any;
+  } | null>(null);
+  const [previewIsStale, setPreviewIsStale] = useState(false);
+
+  // Pull request creation state
+  const [prLoading, setPrLoading] = useState(false);
+  const [prError, setPrError] = useState<string | null>(null);
+  const [prResult, setPrResult] =
+    useState<GitOpsOverridePullRequestResponse | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+
   // True while an env var or file mount row is in edit mode in the
   // Workload tab. Blocks the primary action so users can't submit a
   // half-typed row with empty key/value.
   const [isWorkloadRowEditing, setIsWorkloadRowEditing] = useState(false);
 
-  // Check deploy permission for the final Deploy/Promote button. Pass the
-  // target environment so ABAC `resource.environment` CEL constraints are
-  // honored (openchoreo#3408).
-  const environmentNameForPermission =
-    environment.resourceName || environment.name;
-  const { canDeploy, loading: deployPermissionLoading } = useDeployPermission(
-    environmentNameForPermission,
-  );
+
 
   // Load secret references for workload overrides — limited to refs whose
   // value is reachable from this environment's data plane (or unscoped refs).
@@ -185,8 +199,6 @@ export const EnvironmentOverridesPage = ({
     true, // always open
   );
 
-  const error = loadError || saveError;
-
   // Calculate changes
   const changes = useOverrideChanges(
     formState.initialComponentTypeFormData,
@@ -219,6 +231,35 @@ export const EnvironmentOverridesPage = ({
       formState.componentTypeFormData,
     );
   }, [schemas.componentTypeSchema, formState.componentTypeFormData]);
+
+  // Invalidate preview whenever the developer changes form values after generating a preview
+  useEffect(() => {
+    if (!previewSnapshot.current || !previewResult) return;
+    const snap = previewSnapshot.current;
+    const stale =
+      JSON.stringify(snap.componentTypeFormData) !==
+        JSON.stringify(formState.componentTypeFormData) ||
+      JSON.stringify(snap.traitFormDataMap) !==
+        JSON.stringify(formState.traitFormDataMap) ||
+      JSON.stringify(snap.workloadFormData) !==
+        JSON.stringify(formState.workloadFormData);
+    if (stale) {
+      setPreviewIsStale(true);
+      setPrResult(null);
+      setPrError(null);
+      // Generate new idempotency key for new logical operation
+      setIdempotencyKey(
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+    }
+  }, [
+    formState.componentTypeFormData,
+    formState.traitFormDataMap,
+    formState.workloadFormData,
+    previewResult,
+  ]);
 
   // Helper function to determine tab status with priority: error > info > success > undefined
   const getTabStatus = (
@@ -507,91 +548,136 @@ export const EnvironmentOverridesPage = ({
     ) +
     (changes.workload?.length || 0);
 
-  const handleSaveClick = async () => {
-    // Allow skip when pendingAction exists but no changes
-    if (totalChanges === 0 && pendingAction && onPendingActionComplete) {
-      setSaving(true);
-      try {
-        // No override changes — just ensure binding exists with correct releaseName
-        await client.updateReleaseBinding(
-          entity,
-          environmentName,
-          pendingAction.releaseName,
-          undefined,
-          undefined,
-          undefined,
-          releaseLine,
-        );
-        await onPendingActionComplete(pendingAction);
-      } catch (err) {
-        setSaveError(
-          isForbiddenError(err)
-            ? 'You do not have permission to perform this action. Contact your administrator.'
-            : getErrorMessage(err),
-        );
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
-
+  // GitOps-only preview: call the backend preview API, capture snapshot for staleness detection
+  const handlePreviewClick = async () => {
     if (totalChanges === 0) {
-      setSaveError('No changes to save');
-      setTimeout(() => setSaveError(null), 3000);
+      setPreviewError('There are no override changes to preview.');
       return;
     }
-    setShowSaveConfirm(true);
-  };
 
-  const handleConfirmSave = async () => {
-    setSaving(true);
-    setSaveError(null);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewIsStale(false);
+    setPrResult(null);
+    setPrError(null);
+    // Generate new idempotency key for a new logical operation
+    setIdempotencyKey(
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+
+    // Capture snapshot of form state at preview time
+    const snapshot = {
+      componentTypeFormData: formState.componentTypeFormData,
+      traitFormDataMap: formState.traitFormDataMap,
+      workloadFormData: formState.workloadFormData,
+    };
 
     try {
-      if (pendingAction) {
-        // updateReleaseBinding handles create-or-update + sets releaseName
-        // This is the ONLY call needed — replaces both patchReleaseBindingOverrides and deploy/promote
-        await client.updateReleaseBinding(
-          entity,
-          environmentName,
-          pendingAction.releaseName,
-          formState.componentTypeFormData,
-          formState.traitFormDataMap,
-          formState.workloadFormData,
-          releaseLine,
+      const result = await client.previewGitOpsOverrides(
+        entity,
+        environmentName,
+        {
+          componentTypeEnvironmentConfigs: formState.componentTypeFormData,
+          traitEnvironmentConfigs: formState.traitFormDataMap,
+          workloadOverrides: formState.workloadFormData,
+        },
+      );
+      if (!result.valid) {
+        setPreviewError(
+          result.error ||
+            (result.error?.includes('not configured')
+              ? result.error
+              : 'The override preview is invalid. GitOps target may not be configured. Please contact your platform administrator.'),
         );
       } else {
-        // Plain save — use existing patchReleaseBindingOverrides
-        await client.patchReleaseBindingOverrides(
-          entity,
-          environmentName,
-          formState.componentTypeFormData,
-          formState.traitFormDataMap,
-          formState.workloadFormData,
-          undefined,
-          releaseLine,
-        );
-      }
-
-      setShowSaveConfirm(false);
-
-      // If there's a pending action, notify and navigate
-      if (pendingAction && onPendingActionComplete) {
-        await onPendingActionComplete(pendingAction);
-        // onPendingActionComplete handles navigation
-      } else {
-        onSaved();
-        onBack();
+        previewSnapshot.current = snapshot;
+        setPreviewResult(result);
+        setPreviewIsStale(false);
       }
     } catch (err) {
-      setSaveError(
-        isForbiddenError(err)
-          ? 'You do not have permission to perform this action. Contact your administrator.'
-          : getErrorMessage(err),
-      );
-      setShowSaveConfirm(false);
+      setPreviewError(getErrorMessage(err));
+      // Preserve editor values on error (no state reset)
     } finally {
-      setSaving(false);
+      setPreviewLoading(false);
+    }
+  };
+
+  // Delete handler: all delete operations only update local editor state.
+  // No direct ReleaseBinding API calls are made from this page.
+  const handleCreatePullRequest = async () => {
+    if (!previewResult || previewIsStale || !previewResult.changed) {
+      return;
+    }
+    if (!previewResult.originalSha) {
+      setPrError('Missing preview SHA. Please generate a new preview.');
+      return;
+    }
+
+    setPrLoading(true);
+    setPrError(null);
+
+    try {
+      let key = idempotencyKey;
+      if (!key) {
+        key =
+          typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        setIdempotencyKey(key);
+      }
+
+      const result = await client.createGitOpsOverridePullRequest(
+        entity,
+        environmentName,
+        {
+          componentTypeEnvironmentConfigs: formState.componentTypeFormData,
+          traitEnvironmentConfigs: formState.traitFormDataMap,
+          workloadOverrides: formState.workloadFormData,
+          expectedSha: previewResult.originalSha,
+          idempotencyKey: key,
+        },
+      );
+
+      if (result.changed === false) {
+        setPrResult(result);
+        setPrError(null);
+        return;
+      }
+
+      if (result.success && result.pullRequest?.url) {
+        setPrResult(result);
+        setPrError(null);
+      } else if (result.error) {
+        setPrError(result.error);
+      } else {
+        setPrError('Failed to create pull request.');
+      }
+    } catch (err: any) {
+      const message = getErrorMessage(err);
+      // Check if it's a 409 conflict
+      if (
+        err?.status === 409 ||
+        err?.statusCode === 409 ||
+        err?.response?.status === 409 ||
+        err?.cause?.status === 409 ||
+        message.toLowerCase().includes('conflict')
+      ) {
+        setPreviewIsStale(true);
+        setPrError(
+          'The GitOps manifest has changed since your preview. Please generate a new preview before creating a pull request.',
+        );
+        setIdempotencyKey(
+          typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        );
+      } else {
+        setPrError(message);
+      }
+    } finally {
+      setPrLoading(false);
     }
   };
 
@@ -600,55 +686,29 @@ export const EnvironmentOverridesPage = ({
     setShowDeleteConfirm(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     if (!deleteTarget) return;
 
-    setDeleting(true);
-    setSaveError(null);
-
-    try {
-      if (deleteTarget === 'all') {
-        await client.patchReleaseBindingOverrides(
-          entity,
-          environmentName,
-          {},
-          {},
-          {},
-          undefined,
-          releaseLine,
-        );
-        setShowDeleteConfirm(false);
-        onSaved();
-        onBack();
-      } else if (deleteTarget === 'component') {
-        setComponentTypeFormData({});
-        setShowDeleteConfirm(false);
-        setDeleteTarget(null);
-      } else if (deleteTarget === 'workload') {
-        setWorkloadFormData({});
-        setShowDeleteConfirm(false);
-        setDeleteTarget(null);
-      } else {
-        // Delete specific trait overrides
-        setTraitFormDataMap(prev => {
-          const newMap = { ...prev };
-          delete newMap[deleteTarget];
-          return newMap;
-        });
-        setShowDeleteConfirm(false);
-        setDeleteTarget(null);
-      }
-    } catch (err) {
-      setSaveError(
-        isForbiddenError(err)
-          ? 'You do not have permission to perform this action. Contact your administrator.'
-          : getErrorMessage(err),
-      );
-      setShowDeleteConfirm(false);
-      setDeleteTarget(null);
-    } finally {
-      setDeleting(false);
+    if (deleteTarget === 'all') {
+      // Reset all local form state to empty — does NOT call any API
+      setComponentTypeFormData({});
+      setTraitFormDataMap({});
+      setWorkloadFormData({});
+    } else if (deleteTarget === 'component') {
+      setComponentTypeFormData({});
+    } else if (deleteTarget === 'workload') {
+      setWorkloadFormData({});
+    } else {
+      // Delete specific trait overrides
+      setTraitFormDataMap(prev => {
+        const newMap = { ...prev };
+        delete newMap[deleteTarget];
+        return newMap;
+      });
     }
+
+    setShowDeleteConfirm(false);
+    setDeleteTarget(null);
   };
 
   const hasSchemas =
@@ -668,25 +728,10 @@ export const EnvironmentOverridesPage = ({
     }
   };
 
-  // Determine button text based on pending action and changes
-  const getSaveButtonText = () => {
-    if (saving) {
-      if (pendingAction?.type === 'deploy') return 'Deploying...';
-      if (pendingAction?.type === 'promote') return 'Promoting...';
-      return 'Saving...';
-    }
-
-    if (pendingAction) {
-      const hasChanges = totalChanges > 0;
-      if (pendingAction.type === 'deploy') {
-        return hasChanges ? 'Save & Deploy' : 'Deploy';
-      }
-      if (pendingAction.type === 'promote') {
-        return hasChanges ? 'Save & Promote' : 'Promote';
-      }
-    }
-
-    return 'Save Overrides';
+  // Determine button text — always GitOps preview flow
+  const getPreviewButtonText = () => {
+    if (previewLoading) return 'Generating Preview...';
+    return 'Preview Changes';
   };
 
   // Get the warning message for missing required fields
@@ -704,6 +749,7 @@ export const EnvironmentOverridesPage = ({
   // context on the overrides page. Falls back to today's "Configure overrides"
   // wording when there's no pending action (editing an existing binding).
   const getPageTitle = () => {
+    if (previewResult) return 'Review GitOps Changes';
     if (!pendingAction) return 'Configure overrides';
     const blocking = missingRequiredFields.length > 0;
     if (blocking)
@@ -714,6 +760,9 @@ export const EnvironmentOverridesPage = ({
   };
 
   const getPageSubtitle = () => {
+    if (previewResult) {
+      return `${previewResult.repository} · ${previewResult.baseBranch} · ${environment.name}`;
+    }
     if (!pendingAction) return environment.name;
     const blocking = missingRequiredFields.length > 0;
     if (blocking) {
@@ -729,67 +778,96 @@ export const EnvironmentOverridesPage = ({
       : `Review environment overrides in ${pendingAction.targetEnvironment} before promoting.`;
   };
 
-  // Header actions - show when content exists OR when there's a pending action (for Skip & Deploy)
-  const showActions = !loading && !error && (hasAnyContent || pendingAction);
+  // Header actions
+  const showActions = !loading && !loadError && (hasAnyContent || pendingAction);
   const headerActions = showActions ? (
     <>
-      {!pendingAction && (
+      {!previewResult && (
         <Button
           onClick={() => handleDeleteClick('all')}
           color="secondary"
-          disabled={deleting || saving || loading || !initialOverrides.hasAny}
+          disabled={previewLoading || loading || !initialOverrides.hasAny}
+          data-testid="delete-all-button"
         >
           Delete All
         </Button>
       )}
-      {pendingAction?.releaseName && environment.deployment.releaseName && (
-        <Tooltip
-          title={
-            pendingAction.type === 'promote'
-              ? "Compare the source release with this environment's current release"
-              : "Compare the selected release with this environment's current release"
-          }
-        >
-          <span>
-            <Button
-              onClick={() => setDiffOpen(true)}
-              variant="outlined"
-              startIcon={<CompareArrowsIcon fontSize="small" />}
-              disabled={saving || deleting}
-              style={{ marginRight: 8 }}
-            >
-              View release diff
-            </Button>
-          </span>
-        </Tooltip>
-      )}
-      {pendingAction && onPrevious && (
+      {!previewResult &&
+        pendingAction?.releaseName &&
+        environment.deployment.releaseName && (
+          <Tooltip
+            title={
+              pendingAction.type === 'promote'
+                ? "Compare the source release with this environment's current release"
+                : "Compare the selected release with this environment's current release"
+            }
+          >
+            <span>
+              <Button
+                onClick={() => setDiffOpen(true)}
+                variant="outlined"
+                startIcon={<CompareArrowsIcon fontSize="small" />}
+                disabled={previewLoading}
+                style={{ marginRight: 8 }}
+              >
+                View release diff
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+      {!previewResult && pendingAction && onPrevious && (
         <Button
           onClick={onPrevious}
           variant="outlined"
-          disabled={saving || deleting}
+          disabled={previewLoading}
           style={{ marginRight: 8 }}
         >
           Previous
         </Button>
       )}
       <Button
-        onClick={handleSaveClick}
+        onClick={
+          previewResult
+            ? () => {
+                setPreviewResult(null);
+                setPrResult(null);
+                setPrError(null);
+              }
+            : handlePreviewClick
+        }
         variant="contained"
         color="primary"
         disabled={
-          saving ||
-          deleting ||
-          loading ||
-          !!error ||
-          missingRequiredFields.length > 0 ||
-          isWorkloadRowEditing ||
-          (!pendingAction && totalChanges === 0) ||
-          (!!pendingAction && (deployPermissionLoading || !canDeploy))
+          previewResult
+            ? previewLoading
+            : previewLoading ||
+              loading ||
+              !!loadError ||
+              missingRequiredFields.length > 0 ||
+              isWorkloadRowEditing ||
+              totalChanges === 0
         }
       >
-        {getSaveButtonText()}
+        {previewResult ? 'Back to Editor' : getPreviewButtonText()}
       </Button>
+      {previewResult && (
+        <Button
+          variant="outlined"
+          color="primary"
+          onClick={handleCreatePullRequest}
+          disabled={
+            prLoading ||
+            previewIsStale ||
+            !previewResult.valid ||
+            !previewResult.changed ||
+            !!prResult?.pullRequest
+          }
+          style={{ marginLeft: 8 }}
+          data-testid="create-pr-button"
+        >
+          {prLoading ? 'Creating GitHub Pull Request...' : 'Create Pull Request'}
+        </Button>
+      )}
     </>
   ) : null;
 
@@ -804,7 +882,7 @@ export const EnvironmentOverridesPage = ({
           onChange={setComponentTypeFormData}
           onDelete={() => handleDeleteClick('component')}
           hasInitialData={initialOverrides.hasComponentOverrides}
-          disabled={saving || deleting}
+          disabled={previewLoading}
           showValidation
         />
       );
@@ -856,7 +934,7 @@ export const EnvironmentOverridesPage = ({
               Object.keys(formState.initialTraitFormDataMap[traitName]).length >
                 0
             }
-            disabled={saving || deleting}
+            disabled={previewLoading}
             showValidation
           />
         );
@@ -891,7 +969,7 @@ export const EnvironmentOverridesPage = ({
               onAddFileVar={handleAddFileVar}
               onRemoveFileVar={handleRemoveFileVar}
               onArrayFieldChange={handleArrayFieldChange}
-              disabled={saving || deleting || loading}
+              disabled={previewLoading || loading}
               hideContainerFields
               secretReferences={secretReferences}
               baseWorkloadData={formState.baseWorkloadData}
@@ -922,113 +1000,227 @@ export const EnvironmentOverridesPage = ({
         onBack={handleBackClick}
         actions={headerActions}
       >
-        {loading && (
-          <div className={classes.loadingContainer}>
-            <CircularProgress />
-          </div>
-        )}
-
-        {error && !loading && (
-          <div className={classes.errorContainer}>
-            <Typography color="error">{error}</Typography>
-            <Button onClick={reload} variant="outlined">
-              Retry
-            </Button>
-          </div>
-        )}
-
-        {!loading && !error && !hasAnyContent && pendingAction && (
-          <Box
-            display="flex"
-            flexDirection="column"
-            alignItems="center"
-            justifyContent="center"
-            minHeight={300}
-            p={4}
-          >
-            <Typography variant="h6" gutterBottom>
-              No Configuration Required
-            </Typography>
-            <Typography
-              variant="body2"
-              color="textSecondary"
-              align="center"
-              style={{ marginBottom: 24 }}
-            >
-              This component has no environment-specific overrides to configure.
-            </Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={handleSaveClick}
-              disabled={saving || deployPermissionLoading || !canDeploy}
-            >
-              {getSaveButtonText()}
-            </Button>
-          </Box>
-        )}
-
-        {!loading && !error && hasAnyContent && (
-          <>
-            {missingRequiredFields.length > 0 && (
+        {previewResult ? (
+          <Box>
+            <Box mb={2}>
+              <Typography variant="body2">
+                <strong>Repository:</strong> {previewResult.repository}
+              </Typography>
+              <Typography variant="body2">
+                <strong>Branch:</strong> {previewResult.baseBranch}
+              </Typography>
+              <Typography variant="body2">
+                <strong>Environment:</strong> {environment.name}
+              </Typography>
+              <Typography variant="body2">
+                <strong>File:</strong> {previewResult.manifestPath}
+              </Typography>
+            </Box>
+            {previewIsStale && (
               <Box mb={2}>
                 <Alert severity="warning">
-                  <strong>Required configuration needed.</strong>{' '}
-                  {getRequiredFieldsWarningMessage()}
+                  You have made changes since this preview was generated. Please
+                  regenerate the preview to reflect the latest values.
                 </Alert>
               </Box>
             )}
-
-            {!currentOverrides.hasAny && !pendingAction && (
-              <Box className={classes.helpText}>
-                <Typography variant="body2" gutterBottom>
-                  <strong>Environment Overrides</strong>
-                </Typography>
-                <Typography variant="body2" color="textSecondary">
-                  Configure environment-specific settings for your component's
-                  containers, such as environment variables and file mounts.
-                  These overrides apply only to the{' '}
-                  <strong>{environment.name}</strong> environment.
+            {previewResult.changed ? (
+              <Alert severity="success">Validation successful.</Alert>
+            ) : (
+              <Alert severity="info">
+                The proposed overrides produce no YAML changes.
+              </Alert>
+            )}
+            {prError && (
+              <Box mt={2}>
+                <Alert severity="error">{prError}</Alert>
+              </Box>
+            )}
+            {prResult?.changed === false && (
+              <Box mt={2}>
+                <Alert severity="info">
+                  {prResult.message || 'No changes detected. Nothing needs to be submitted.'}
+                </Alert>
+              </Box>
+            )}
+            {prResult?.success && prResult.pullRequest && (
+              <Box mt={2}>
+                <Alert severity="success">
+                  Pull Request #{prResult.pullRequest.number} created successfully.
+                </Alert>
+                <Box mt={1} display="flex" gridGap={8}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<LaunchIcon />}
+                    onClick={() => {
+                      if (prResult.pullRequest?.url) {
+                        window.open(prResult.pullRequest.url, '_blank', 'noopener,noreferrer');
+                      }
+                    }}
+                  >
+                    Open Pull Request
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setPrResult(null)}
+                  >
+                    Back to Editor
+                  </Button>
+                </Box>
+                {prResult.pullRequest.title && (
+                  <Box mt={1}>
+                    <Typography variant="body2">
+                      <strong>Title:</strong> {prResult.pullRequest.title}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            )}
+            {pendingAction && (
+              <Box mt={2}>
+                <Alert severity="info">
+                  This preview prepares a GitOps override pull request; it does
+                  not deploy or promote the release. Deployment and promotion
+                  happen through their respective workflows after changes are
+                  reviewed and merged.
+                </Alert>
+              </Box>
+            )}
+            <Box mt={2}>
+              <YamlDiffViewer
+                original={previewResult.originalManifest}
+                modified={previewResult.proposedManifest}
+                originalLabel="Current manifest"
+                modifiedLabel="Proposed manifest"
+                height="55vh"
+              />
+            </Box>
+          </Box>
+        ) : (
+          <>
+            <Alert severity="info" style={{ marginBottom: 16 }}>
+              Changes are managed through GitOps. Preview the YAML diff before
+              submitting a Pull Request.
+            </Alert>
+            {previewError && (
+              <Box mb={2}>
+                <Alert severity="error">{previewError}</Alert>
+              </Box>
+            )}
+            {previewLoading && (
+              <Box mb={2} display="flex" alignItems="center" gridGap={8}>
+                <CircularProgress size={20} />
+                <Typography variant="body2">
+                  Fetching the configured manifest and generating a preview...
                 </Typography>
               </Box>
             )}
-
-            {tabs.length > 0 && (
-              <VerticalTabNav
-                tabs={tabs}
-                activeTabId={activeTab}
-                onChange={setActiveTab}
-                className={classes.tabNav}
-              >
-                {renderTabContent()}
-              </VerticalTabNav>
+            {loading && (
+              <div className={classes.loadingContainer}>
+                <CircularProgress />
+              </div>
             )}
 
-            {tabs.length === 0 && (
+            {loadError && !loading && (
+              <div className={classes.errorContainer}>
+                <Typography color="error">{loadError}</Typography>
+                <Button onClick={reload} variant="outlined">
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {!loading && !loadError && !hasAnyContent && pendingAction && (
               <Box
-                p={2}
-                style={{
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: '4px',
-                }}
+                display="flex"
+                flexDirection="column"
+                alignItems="center"
+                justifyContent="center"
+                minHeight={300}
+                p={4}
               >
-                <Typography variant="body2" color="textSecondary">
-                  No configuration options available for this component.
+                <Typography variant="h6" gutterBottom>
+                  No Configuration Required
                 </Typography>
+                <Typography
+                  variant="body2"
+                  color="textSecondary"
+                  align="center"
+                  style={{ marginBottom: 24 }}
+                >
+                  This component has no environment-specific overrides to
+                  configure.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={handlePreviewClick}
+                  disabled={
+                    previewLoading ||
+                    false ||
+                    false
+                  }
+                >
+                  {getPreviewButtonText()}
+                </Button>
               </Box>
+            )}
+
+            {!loading && !loadError && hasAnyContent && (
+              <>
+                {missingRequiredFields.length > 0 && (
+                  <Box mb={2}>
+                    <Alert severity="warning">
+                      <strong>Required configuration needed.</strong>{' '}
+                      {getRequiredFieldsWarningMessage()}
+                    </Alert>
+                  </Box>
+                )}
+
+                {!currentOverrides.hasAny && !pendingAction && (
+                  <Box className={classes.helpText}>
+                    <Typography variant="body2" gutterBottom>
+                      <strong>Environment Overrides</strong>
+                    </Typography>
+                    <Typography variant="body2" color="textSecondary">
+                      Configure environment-specific settings for your
+                      component's containers, such as environment variables and
+                      file mounts. These overrides apply only to the{' '}
+                      <strong>{environment.name}</strong> environment.
+                    </Typography>
+                  </Box>
+                )}
+
+                {tabs.length > 0 && (
+                  <VerticalTabNav
+                    tabs={tabs}
+                    activeTabId={activeTab}
+                    onChange={setActiveTab}
+                    className={classes.tabNav}
+                  >
+                    {renderTabContent()}
+                  </VerticalTabNav>
+                )}
+
+                {tabs.length === 0 && (
+                  <Box
+                    p={2}
+                    style={{
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    <Typography variant="body2" color="textSecondary">
+                      No configuration options available for this component.
+                    </Typography>
+                  </Box>
+                )}
+              </>
             )}
           </>
         )}
       </DetailPageLayout>
-
-      <SaveConfirmationDialog
-        open={showSaveConfirm}
-        onCancel={() => setShowSaveConfirm(false)}
-        onConfirm={handleConfirmSave}
-        changes={changes}
-        environmentName={environment.name}
-        saving={saving}
-      />
 
       <DeleteConfirmationDialog
         open={showDeleteConfirm}
@@ -1040,7 +1232,7 @@ export const EnvironmentOverridesPage = ({
         deleteTarget={deleteTarget}
         initialComponentTypeFormData={formState.initialComponentTypeFormData}
         initialTraitFormDataMap={formState.initialTraitFormDataMap}
-        deleting={deleting}
+        deleting={false}
       />
 
       <UnsavedChangesDialog

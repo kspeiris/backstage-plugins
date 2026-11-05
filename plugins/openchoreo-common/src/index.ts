@@ -184,13 +184,25 @@ export {
   type PageVariant,
   type ComponentTypeMapping,
 } from './utils/componentTypeUtils';
+export {
+  patchReleaseBindingManifest,
+  generateUnifiedDiff,
+  type PatchOptions,
+  type PatchResult,
+} from './utils/gitopsManifestPatcher';
 
 // Feature flags types
 export type { OpenChoreoFeatures, FeatureName } from './types/features';
 export type {
   PullRequestState,
   DeploymentState,
+  GitOpsOwnershipState,
+  GitOpsDiagnosticSource,
+  GitOpsStatusDiagnostic,
   GitOpsChangeStatus,
+  GitOpsOwnership,
+  GitOpsTargetCoordinates,
+  GitOpsTargetConfig,
 } from './types/gitops-change-status';
 
 // BFF response & request types (hand-written, decoupled from generated client)

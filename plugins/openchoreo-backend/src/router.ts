@@ -43,6 +43,7 @@ import {
   getUserTokenFromRequest,
   createRequireAuthMiddleware,
 } from '@openchoreo/openchoreo-auth';
+import type { GitOpsOwnershipService } from './services/GitOpsOwnershipService';
 import { execSessionStore } from './ExecSessionStore';
 import type { AuthService, LoggerService } from '@backstage/backend-plugin-api';
 import type { CatalogService } from '@backstage/plugin-catalog-node';
@@ -107,6 +108,7 @@ function requestReleaseLine(req: express.Request): string | undefined {
 }
 
 export async function createRouter({
+  gitOpsOwnershipService,
   environmentInfoService,
   cellDiagramInfoService,
   buildInfoService,
@@ -139,6 +141,7 @@ export async function createRouter({
   wirelogsStreamTimeoutMs,
   logger,
 }: {
+  gitOpsOwnershipService: GitOpsOwnershipService;
   environmentInfoService: EnvironmentInfoService;
   cellDiagramInfoService: CellDiagramService;
   buildInfoService: BuildInfoService;
@@ -182,6 +185,37 @@ export async function createRouter({
   // When auth is enabled, POST/PUT/PATCH/DELETE operations require a valid user token
   const requireAuth = createRequireAuthMiddleware(tokenService, authEnabled);
 
+  const ensureDirectWriteAllowed = async ({
+    namespaceName,
+    projectName,
+    componentName,
+    environment,
+  }: {
+    namespaceName: string;
+    projectName: string;
+    componentName: string;
+    environment: string;
+  }) => {
+    const ownership = await gitOpsOwnershipService.getOwnership({
+      namespaceName,
+      projectName,
+      componentName,
+      environment,
+    });
+
+    if (ownership.ownership === 'GITOPS_MANAGED') {
+      throw new NotAllowedError(
+        'This resource is GitOps-managed. Use the GitOps pull request workflow instead of a direct write.',
+      );
+    }
+
+    if (ownership.ownership === 'UNKNOWN') {
+      throw new NotAllowedError(
+        'This resource ownership is unknown. Direct writes are blocked until the resource is explicitly classified.',
+      );
+    }
+  };
+
   // Deployed OpenChoreo platform version — upstream endpoint is public
   // (`security: []`), so no auth middleware here.
   router.get('/platform-version', async (_req, res) => {
@@ -220,6 +254,13 @@ export async function createRouter({
         'componentName, projectName, namespaceName and environment are required in request body',
       );
     }
+
+    await ensureDirectWriteAllowed({
+      namespaceName: namespaceName as string,
+      projectName: projectName as string,
+      componentName: componentName as string,
+      environment: environment as string,
+    });
 
     const userToken = getUserTokenFromRequest(req);
 
@@ -1601,6 +1642,13 @@ export async function createRouter({
       );
     }
 
+    await ensureDirectWriteAllowed({
+      namespaceName: namespaceName as string,
+      projectName: projectName as string,
+      componentName: componentName as string,
+      environment: environment as string,
+    });
+
     const userToken = getUserTokenFromRequest(req);
 
     res.json(
@@ -1638,6 +1686,13 @@ export async function createRouter({
         'componentName, projectName, namespaceName and environment are required in request body',
       );
     }
+
+    await ensureDirectWriteAllowed({
+      namespaceName: namespaceName as string,
+      projectName: projectName as string,
+      componentName: componentName as string,
+      environment: environment as string,
+    });
 
     const userToken = getUserTokenFromRequest(req);
 
