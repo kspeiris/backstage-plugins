@@ -196,6 +196,7 @@ export type { OpenChoreoFeatures, FeatureName } from './types/features';
 export type {
   PullRequestState,
   DeploymentState,
+  FluxSyncState,
   GitOpsOwnershipState,
   GitOpsDiagnosticSource,
   GitOpsStatusDiagnostic,

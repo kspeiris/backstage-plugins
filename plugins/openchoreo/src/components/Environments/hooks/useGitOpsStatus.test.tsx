@@ -64,7 +64,7 @@ describe('useGitOpsStatus', () => {
             apis={[
               [
                 openChoreoClientApiRef,
-                { fetchGitOpsChangeStatus } as OpenChoreoClientApi,
+                { fetchGitOpsChangeStatus } as unknown as OpenChoreoClientApi,
               ],
             ]}
           >

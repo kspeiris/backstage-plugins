@@ -43,6 +43,7 @@ import {
   immediateCatalogServiceRef,
 } from '@openchoreo/backstage-plugin-catalog-backend-module';
 import { createGitOpsRouter } from './gitopsRouter';
+import { FluxStatusService } from './services/FluxStatusService';
 import {
   applyGitOpsChangeTrackerMigrations,
   GitOpsChangeTrackerService,
@@ -57,12 +58,8 @@ import {
   GitOpsTargetConfigurationService,
   readGitOpsTargetBootstrapMappings,
 } from './services/GitOpsTargetConfigurationService';
-import {
-  createGitOpsOverridePreviewService,
-} from './services/GitOpsOverridePreviewService';
-import {
-  createGitOpsOverridePullRequestService,
-} from './services/GitOpsOverridePullRequestService';
+import { createGitOpsOverridePreviewService } from './services/GitOpsOverridePreviewService';
+import { createGitOpsOverridePullRequestService } from './services/GitOpsOverridePullRequestService';
 import {
   applyGitOpsOverridePRIdempotencyMigrations,
   GitOpsOverridePRIdempotencyService,
@@ -224,23 +221,55 @@ export const choreoPlugin = createBackendPlugin({
           githubCredentialsProvider,
         );
         const gitOpsOwnershipService = new GitOpsOwnershipService(gitopsKnex);
-        const gitOpsTargetService = new GitOpsTargetConfigurationService(gitopsKnex);
+        const gitOpsTargetService = new GitOpsTargetConfigurationService(
+          gitopsKnex,
+        );
         await applyGitOpsTargetMigrations(gitopsKnex, logger);
-        const gitOpsOverridePreviewService = createGitOpsOverridePreviewService({
-          logger,
-          targetService: gitOpsTargetService,
-          githubCredentialsProvider,
-        });
+        const gitOpsOverridePreviewService = createGitOpsOverridePreviewService(
+          {
+            logger,
+            targetService: gitOpsTargetService,
+            githubCredentialsProvider,
+          },
+        );
         await applyGitOpsOverridePRIdempotencyMigrations(gitopsKnex, logger);
-        const gitOpsOverridePRIdempotencyService = new GitOpsOverridePRIdempotencyService(gitopsKnex);
-        const gitOpsOverridePullRequestService = createGitOpsOverridePullRequestService({
-          logger,
-          targetService: gitOpsTargetService,
-          githubCredentialsProvider,
-          idempotencyService: gitOpsOverridePRIdempotencyService,
-        });
+        const gitOpsOverridePRIdempotencyService =
+          new GitOpsOverridePRIdempotencyService(gitopsKnex);
+        const gitOpsOverridePullRequestService =
+          createGitOpsOverridePullRequestService({
+            logger,
+            targetService: gitOpsTargetService,
+            githubCredentialsProvider,
+            idempotencyService: gitOpsOverridePRIdempotencyService,
+          });
         const gitopsManagementConfig =
           openchoreoConfig.getOptionalConfig('gitops');
+        const fluxStatusConfig =
+          gitopsManagementConfig?.getOptionalConfig('fluxStatus');
+        const fluxStatusScopeConfig =
+          fluxStatusConfig?.getOptionalConfig('scope');
+        const fluxStatusService = fluxStatusConfig?.getOptionalBoolean(
+          'enabled',
+        )
+          ? new FluxStatusService(
+              fluxStatusConfig.getOptionalString('namespace') ?? 'flux-system',
+              fluxStatusConfig.getOptionalString('gitRepository') ??
+                'openchoreo-gitops',
+              fluxStatusConfig.getOptionalString('kustomization') ??
+                'openchoreo-gitops',
+              {
+                namespaceName:
+                  fluxStatusScopeConfig?.getOptionalString('namespace') ??
+                  'default',
+                projectName:
+                  fluxStatusScopeConfig?.getOptionalString('project') ??
+                  'default',
+                componentName:
+                  fluxStatusScopeConfig?.getOptionalString('component') ??
+                  'biocare-web',
+              },
+            )
+          : undefined;
         const gitOpsAdminAuthorizationService =
           createGitOpsAdminAuthorizationService(gitopsManagementConfig);
         const bootstrapMappings = readGitOpsOwnershipBootstrapMappings(
@@ -267,6 +296,7 @@ export const choreoPlugin = createBackendPlugin({
             httpAuth,
             adminAuthorizationService: gitOpsAdminAuthorizationService,
             environmentInfoService,
+            fluxStatusService,
             tokenService,
             authEnabled,
             logger,

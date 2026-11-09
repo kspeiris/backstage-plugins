@@ -101,7 +101,8 @@ export class GitOpsOverridePullRequestService {
           componentName,
           environment,
           expectedSha,
-          componentTypeEnvironmentConfigs: request.componentTypeEnvironmentConfigs,
+          componentTypeEnvironmentConfigs:
+            request.componentTypeEnvironmentConfigs,
           traitEnvironmentConfigs: request.traitEnvironmentConfigs,
           workloadOverrides: request.workloadOverrides,
           title,
@@ -113,39 +114,112 @@ export class GitOpsOverridePullRequestService {
     if (idempotencyKey && this.idempotencyService) {
       const existing = await this.idempotencyService.get(idempotencyKey);
       if (existing) {
-        if (existing.status === 'COMPLETED' && existing.resultJson) {
+        if (existing.requestHash !== requestHash) {
+          throw new ConflictError(
+            'This idempotency key was already used for a different GitOps override request.',
+          );
+        }
+        if (existing.status === 'COMPLETED') {
+          if (!existing.resultJson) {
+            throw new ServiceUnavailableError(
+              'The saved result for this idempotent request is missing.',
+            );
+          }
           try {
-            return JSON.parse(existing.resultJson);
+            return JSON.parse(existing.resultJson) as CreatePullRequestResponse;
           } catch {
-            // fall through
+            throw new ServiceUnavailableError(
+              'The saved result for this idempotent request is invalid.',
+            );
           }
         }
-        if (existing.status === 'IN_PROGRESS') {
-          // Wait a short time and recheck - or return existing result if completed
-          const retry = await this.idempotencyService.get(idempotencyKey);
-          if (retry?.status === 'COMPLETED' && retry.resultJson) {
-            try {
-              return JSON.parse(retry.resultJson);
-            } catch {
-              // fall through
-            }
-          }
-        }
+        throw new ConflictError(
+          existing.status === 'IN_PROGRESS'
+            ? 'A pull request submission with this idempotency key is already in progress.'
+            : 'A previous pull request submission with this idempotency key failed. Submit again with a new key.',
+        );
       }
-      try {
-        await this.idempotencyService.createInProgress({
-          key: idempotencyKey,
-          namespaceName,
-          projectName,
-          componentName,
-          environment,
-          requestHash,
-          status: 'IN_PROGRESS',
-        });
-      } catch {
-        // ignore
+      const claimed = await this.idempotencyService.createInProgress({
+        key: idempotencyKey,
+        namespaceName,
+        projectName,
+        componentName,
+        environment,
+        requestHash,
+        status: 'IN_PROGRESS',
+      });
+      if (!claimed) {
+        const raced = await this.idempotencyService.get(idempotencyKey);
+        if (
+          raced?.requestHash === requestHash &&
+          raced.status === 'COMPLETED'
+        ) {
+          if (!raced.resultJson) {
+            throw new ServiceUnavailableError(
+              'The saved result for this idempotent request is missing.',
+            );
+          }
+          try {
+            return JSON.parse(raced.resultJson) as CreatePullRequestResponse;
+          } catch {
+            throw new ServiceUnavailableError(
+              'The saved result for this idempotent request is invalid.',
+            );
+          }
+        }
+        if (raced && raced.requestHash !== requestHash) {
+          throw new ConflictError(
+            'This idempotency key was already used for a different GitOps override request.',
+          );
+        }
+        if (raced) {
+          throw new ConflictError(
+            raced.status === 'IN_PROGRESS'
+              ? 'A pull request submission with this idempotency key is already in progress.'
+              : 'A previous pull request submission with this idempotency key failed. Submit again with a new key.',
+          );
+        }
+        throw new ServiceUnavailableError(
+          'Could not reserve the idempotency key for this pull request submission.',
+        );
       }
     }
+
+    try {
+      return await this.createPullRequestWithReservedKey(request);
+    } catch (error) {
+      if (idempotencyKey && this.idempotencyService) {
+        try {
+          await this.idempotencyService.updateFailed(
+            idempotencyKey,
+            error instanceof Error ? error.message : String(error),
+          );
+        } catch (updateError) {
+          this.logger.error(
+            `Failed to mark GitOps override request ${idempotencyKey} as failed`,
+            updateError instanceof Error
+              ? updateError
+              : new Error(String(updateError)),
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async createPullRequestWithReservedKey(
+    request: CreatePullRequestRequest,
+  ): Promise<CreatePullRequestResponse> {
+    const {
+      namespaceName,
+      projectName,
+      componentName,
+      environment,
+      expectedSha,
+      title,
+      description,
+      idempotencyKey,
+    } = request;
 
     const target = await this.targetService.findTarget({
       namespaceName,
@@ -177,7 +251,8 @@ export class GitOpsOverridePullRequestService {
     const pathSegments = manifestPath.split('/');
     if (
       pathSegments.some(
-        (segment: string) => segment.length === 0 || segment === '.' || segment === '..',
+        (segment: string) =>
+          segment.length === 0 || segment === '.' || segment === '..',
       ) ||
       manifestPath.includes('\\')
     ) {
@@ -201,7 +276,9 @@ export class GitOpsOverridePullRequestService {
         typeof request.componentTypeEnvironmentConfigs !== 'object' ||
         Array.isArray(request.componentTypeEnvironmentConfigs)
       ) {
-        throw new InputError('componentTypeEnvironmentConfigs must be an object');
+        throw new InputError(
+          'componentTypeEnvironmentConfigs must be an object',
+        );
       }
       overrides.componentTypeEnvironmentConfigs =
         request.componentTypeEnvironmentConfigs;
@@ -231,7 +308,10 @@ export class GitOpsOverridePullRequestService {
       throw new InputError('At least one override section must be provided');
     }
 
-    const credentials = await this.getCredentials(repositoryOwner, repositoryName);
+    const credentials = await this.getCredentials(
+      repositoryOwner,
+      repositoryName,
+    );
 
     const { content: originalContent, sha: currentSha } =
       await this.fetchManifestFromGitHub(
@@ -271,13 +351,9 @@ export class GitOpsOverridePullRequestService {
         message: 'No changes detected. Nothing needs to be submitted.',
       };
       if (idempotencyKey && this.idempotencyService) {
-        try {
-          await this.idempotencyService.updateCompleted(idempotencyKey, {
-            resultJson: JSON.stringify(noChangeResult),
-          });
-        } catch {
-          // ignore
-        }
+        await this.idempotencyService.updateCompleted(idempotencyKey, {
+          resultJson: JSON.stringify(noChangeResult),
+        });
       }
       return noChangeResult;
     }
@@ -303,7 +379,9 @@ export class GitOpsOverridePullRequestService {
       );
     } catch (error) {
       if (error instanceof ConflictError) {
-        const alternativeBranch = `gitops/overrides/${componentName}-${environment}-${this.generateShortId()}-${Date.now().toString().slice(-6)}`;
+        const alternativeBranch = `gitops/overrides/${componentName}-${environment}-${this.generateShortId()}-${Date.now()
+          .toString()
+          .slice(-6)}`;
         await this.createBranch(
           credentials,
           repositoryOwner,
@@ -325,15 +403,17 @@ export class GitOpsOverridePullRequestService {
           credentials,
           repositoryOwner,
           repositoryName,
-          title || `chore(gitops): update ${componentName} overrides in ${environment}`,
-          description || this.buildDescription({
-            namespaceName,
-            projectName,
-            componentName,
-            environment,
-            manifestPath,
-            repository,
-          }),
+          title ||
+            `chore(gitops): update ${componentName} overrides in ${environment}`,
+          description ||
+            this.buildDescription({
+              namespaceName,
+              projectName,
+              componentName,
+              environment,
+              manifestPath,
+              repository,
+            }),
           alternativeBranch,
           baseBranch,
         );
@@ -349,18 +429,14 @@ export class GitOpsOverridePullRequestService {
           },
         };
         if (idempotencyKey && this.idempotencyService) {
-          try {
-            await this.idempotencyService.updateCompleted(idempotencyKey, {
-              branchName: alternativeBranch,
-              pullRequestNumber: pr.number,
-              pullRequestUrl: pr.html_url,
-              pullRequestTitle: pr.title,
-              baseBranch,
-              resultJson: JSON.stringify(altSuccessResult),
-            });
-          } catch {
-            // ignore
-          }
+          await this.idempotencyService.updateCompleted(idempotencyKey, {
+            branchName: alternativeBranch,
+            pullRequestNumber: pr.number,
+            pullRequestUrl: pr.html_url,
+            pullRequestTitle: pr.title,
+            baseBranch,
+            resultJson: JSON.stringify(altSuccessResult),
+          });
         }
         return altSuccessResult;
       }
@@ -382,15 +458,17 @@ export class GitOpsOverridePullRequestService {
       credentials,
       repositoryOwner,
       repositoryName,
-      title || `chore(gitops): update ${componentName} overrides in ${environment}`,
-      description || this.buildDescription({
-        namespaceName,
-        projectName,
-        componentName,
-        environment,
-        manifestPath,
-        repository,
-      }),
+      title ||
+        `chore(gitops): update ${componentName} overrides in ${environment}`,
+      description ||
+        this.buildDescription({
+          namespaceName,
+          projectName,
+          componentName,
+          environment,
+          manifestPath,
+          repository,
+        }),
       branchName,
       baseBranch,
     );
@@ -407,18 +485,14 @@ export class GitOpsOverridePullRequestService {
       },
     };
     if (idempotencyKey && this.idempotencyService) {
-      try {
-        await this.idempotencyService.updateCompleted(idempotencyKey, {
-          branchName,
-          pullRequestNumber: pr.number,
-          pullRequestUrl: pr.html_url,
-          pullRequestTitle: pr.title,
-          baseBranch,
-          resultJson: JSON.stringify(successResult),
-        });
-      } catch {
-        // ignore
-      }
+      await this.idempotencyService.updateCompleted(idempotencyKey, {
+        branchName,
+        pullRequestNumber: pr.number,
+        pullRequestUrl: pr.html_url,
+        pullRequestTitle: pr.title,
+        baseBranch,
+        resultJson: JSON.stringify(successResult),
+      });
     }
     return successResult;
   }
@@ -455,10 +529,7 @@ export class GitOpsOverridePullRequestService {
     ].join('\n');
   }
 
-  private async getCredentials(
-    owner: string,
-    repo: string,
-  ): Promise<any> {
+  private async getCredentials(owner: string, repo: string): Promise<any> {
     if (!this.githubCredentialsProvider) {
       throw new ServiceUnavailableError(
         'GitHub credentials provider is not configured for pull request creation',
@@ -786,16 +857,19 @@ export function createGitOpsOverridePullRequestService({
   targetService,
   githubCredentialsProvider,
   githubFetch = fetch,
+  idempotencyService,
 }: {
   logger: LoggerService;
   targetService: GitOpsTargetConfigurationService;
   githubCredentialsProvider?: GithubCredentialsProvider;
   githubFetch?: typeof fetch;
+  idempotencyService?: GitOpsOverridePRIdempotencyService;
 }): GitOpsOverridePullRequestService {
   return new GitOpsOverridePullRequestService(
     logger,
     targetService,
     githubCredentialsProvider,
     githubFetch,
+    idempotencyService,
   );
 }

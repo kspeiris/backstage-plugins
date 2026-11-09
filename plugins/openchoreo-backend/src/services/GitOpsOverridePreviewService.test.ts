@@ -50,7 +50,7 @@ function createService({
   const credentialsProvider = {
     getCredentials: jest.fn().mockResolvedValue({ headers: {} }),
   } as unknown as GithubCredentialsProvider;
-  const githubFetch = jest.fn(
+  const githubFetchMock = jest.fn(
     async (_url: string | URL | Request, _init?: RequestInit) =>
       fetchResponse ??
       new Response(
@@ -61,7 +61,7 @@ function createService({
         }),
         { status: 200 },
       ),
-  ) as typeof fetch;
+  );
   const logger = {
     debug: jest.fn(),
     error: jest.fn(),
@@ -73,9 +73,9 @@ function createService({
       logger,
       targetService,
       credentialsProvider,
-      githubFetch,
+      githubFetchMock as typeof fetch,
     ),
-    githubFetch,
+    githubFetch: githubFetchMock,
     findTarget,
   };
 }

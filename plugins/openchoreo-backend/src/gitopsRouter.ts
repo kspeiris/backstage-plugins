@@ -7,6 +7,10 @@ import type { Request } from 'express';
 import type { EnvironmentInfoService } from './services/EnvironmentService/EnvironmentInfoService';
 import type { GitOpsChangeTrackerService } from './services/GitOpsChangeTrackerService';
 import type {
+  FluxStatus,
+  FluxStatusService,
+} from './services/FluxStatusService';
+import type {
   GitOpsOverridePreviewService,
   PreviewOverrideRequest,
 } from './services/GitOpsOverridePreviewService';
@@ -276,6 +280,7 @@ export async function createGitOpsRouter({
   httpAuth,
   adminAuthorizationService,
   environmentInfoService,
+  fluxStatusService,
   tokenService,
   authEnabled,
   logger,
@@ -289,6 +294,7 @@ export async function createGitOpsRouter({
   httpAuth: HttpAuthService;
   adminAuthorizationService: GitOpsAdminAuthorizationService;
   environmentInfoService: EnvironmentInfoService;
+  fluxStatusService?: FluxStatusService;
   tokenService: OpenChoreoTokenService;
   authEnabled: boolean;
   logger: LoggerService;
@@ -464,9 +470,7 @@ export async function createGitOpsRouter({
     if (!targetService) {
       throw new InputError('GitOps target service is not configured');
     }
-    const target = await targetService.createTarget(
-      parseTargetInput(req.body),
-    );
+    const target = await targetService.createTarget(parseTargetInput(req.body));
     res.status(201).json(target);
   });
 
@@ -475,9 +479,7 @@ export async function createGitOpsRouter({
     if (!targetService) {
       throw new InputError('GitOps target service is not configured');
     }
-    const target = await targetService.updateTarget(
-      parseTargetInput(req.body),
-    );
+    const target = await targetService.updateTarget(parseTargetInput(req.body));
     res.json(target);
   });
 
@@ -582,6 +584,63 @@ export async function createGitOpsRouter({
       });
     }
 
+    let fluxStatus: FluxStatus | undefined;
+    if (fluxStatusService) {
+      try {
+        fluxStatus = await fluxStatusService.getStatus({
+          namespaceName,
+          projectName,
+          componentName,
+        });
+        if (
+          fluxStatus &&
+          (fluxStatus.state === 'FAILED' || fluxStatus.state === 'OUT_OF_SYNC')
+        ) {
+          diagnostics.push({
+            source: 'Flux CD',
+            reason:
+              fluxStatus.state === 'OUT_OF_SYNC'
+                ? 'FluxOutOfSync'
+                : fluxStatus.statusReason,
+            message: sanitizeDiagnosticMessage(
+              fluxStatus.statusMessage ??
+                `Flux reports the GitOps configuration as ${fluxStatus.state
+                  .toLowerCase()
+                  .replaceAll('_', ' ')}.`,
+            ),
+            lastCheckedAt: new Date().toISOString(),
+          });
+        }
+        if (
+          fluxStatus &&
+          fluxStatus.state === 'NOT_CONFIGURED'
+        ) {
+          diagnostics.push({
+            source: 'Flux CD',
+            reason: 'FluxNotConfigured',
+            message: sanitizeDiagnosticMessage(
+              fluxStatus.statusMessage ??
+                'Flux reconciliation is not active for this component.',
+            ),
+            lastCheckedAt: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        logger.error(
+          `Failed to retrieve Flux reconciliation status for ${namespaceName}/${projectName}/${componentName} in ${environmentName}`,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        fluxStatus = { state: 'UNKNOWN' };
+        diagnostics.push({
+          source: 'Flux CD',
+          reason: 'FluxStatusUnavailable',
+          message:
+            'The backend could not retrieve Flux reconciliation status. Refresh to try again.',
+          lastCheckedAt: new Date().toISOString(),
+        });
+      }
+    }
+
     const bindingReady = environment?.deployment.status === 'Ready';
     let deploymentState: DeploymentState;
     if (
@@ -650,6 +709,14 @@ export async function createGitOpsRouter({
           ? sanitizeDiagnosticMessage(environment.deployment.statusMessage)
           : undefined,
       },
+      flux: fluxStatus
+        ? {
+            ...fluxStatus,
+            statusMessage: fluxStatus.statusMessage
+              ? sanitizeDiagnosticMessage(fluxStatus.statusMessage)
+              : undefined,
+          }
+        : undefined,
       diagnostics,
       lastCheckedAt: new Date().toISOString(),
     });
@@ -695,80 +762,96 @@ export async function createGitOpsRouter({
     res.json(result);
   });
 
-
-  router.post('/gitops/overrides/pull-request', requireAuth, async (req, res) => {
-    const body = req.body;
-    if (!body || typeof body !== 'object') {
-      throw new InputError('Request body must be an object');
-    }
-
-    const values = body as Record<string, unknown>;
-
-    const namespaceName = requiredBodyString(
-      values.namespace ?? values.namespaceName,
-      'namespace',
-    );
-    const projectName = requiredBodyString(
-      values.project ?? values.projectName,
-      'project',
-    );
-    const componentName = requiredBodyString(
-      values.component ?? values.componentName,
-      'component',
-    );
-    const environment = requiredBodyString(values.environment, 'environment');
-    const expectedSha = requiredBodyString(values.expectedSha, 'expectedSha');
-    const idempotencyKey =
-      typeof values.idempotencyKey === 'string' && values.idempotencyKey.trim()
-        ? values.idempotencyKey.trim()
-        : undefined;
-
-    const overrides = parsePatchOptions({
-      componentTypeEnvironmentConfigs: values.componentTypeEnvironmentConfigs,
-      traitEnvironmentConfigs: values.traitEnvironmentConfigs,
-      workloadOverrides: values.workloadOverrides,
-    });
-
-    const request: CreatePullRequestRequest = {
-      namespaceName,
-      projectName,
-      componentName,
-      environment,
-      expectedSha,
-      componentTypeEnvironmentConfigs: overrides.componentTypeEnvironmentConfigs,
-      traitEnvironmentConfigs: overrides.traitEnvironmentConfigs,
-      workloadOverrides: overrides.workloadOverrides,
-      title: typeof values.title === 'string' ? values.title : undefined,
-      description:
-        typeof values.description === 'string' ? values.description : undefined,
-      idempotencyKey,
-    };
-
-    try {
-      if (!overridePullRequestService) {
-        throw new InputError('Pull request service is not configured');
+  router.post(
+    '/gitops/overrides/pull-request',
+    requireAuth,
+    async (req, res) => {
+      const body = req.body;
+      if (!body || typeof body !== 'object') {
+        throw new InputError('Request body must be an object');
       }
-      const result = await overridePullRequestService.createPullRequest(request);
-      if (result.changed === false || result.message === 'No changes detected. Nothing needs to be submitted.' || result.error === 'No changes detected') {
-        res.status(200).json({
-          success: true,
-          changed: false,
-          message: result.message || 'No changes detected. Nothing needs to be submitted.',
-        });
-        return;
+
+      const values = body as Record<string, unknown>;
+
+      const namespaceName = requiredBodyString(
+        values.namespace ?? values.namespaceName,
+        'namespace',
+      );
+      const projectName = requiredBodyString(
+        values.project ?? values.projectName,
+        'project',
+      );
+      const componentName = requiredBodyString(
+        values.component ?? values.componentName,
+        'component',
+      );
+      const environment = requiredBodyString(values.environment, 'environment');
+      const expectedSha = requiredBodyString(values.expectedSha, 'expectedSha');
+      const idempotencyKey =
+        typeof values.idempotencyKey === 'string' &&
+        values.idempotencyKey.trim()
+          ? values.idempotencyKey.trim()
+          : undefined;
+
+      const overrides = parsePatchOptions({
+        componentTypeEnvironmentConfigs: values.componentTypeEnvironmentConfigs,
+        traitEnvironmentConfigs: values.traitEnvironmentConfigs,
+        workloadOverrides: values.workloadOverrides,
+      });
+
+      const request: CreatePullRequestRequest = {
+        namespaceName,
+        projectName,
+        componentName,
+        environment,
+        expectedSha,
+        componentTypeEnvironmentConfigs:
+          overrides.componentTypeEnvironmentConfigs,
+        traitEnvironmentConfigs: overrides.traitEnvironmentConfigs,
+        workloadOverrides: overrides.workloadOverrides,
+        title: typeof values.title === 'string' ? values.title : undefined,
+        description:
+          typeof values.description === 'string'
+            ? values.description
+            : undefined,
+        idempotencyKey,
+      };
+
+      try {
+        if (!overridePullRequestService) {
+          throw new InputError('Pull request service is not configured');
+        }
+        const result = await overridePullRequestService.createPullRequest(
+          request,
+        );
+        if (
+          result.changed === false ||
+          result.message ===
+            'No changes detected. Nothing needs to be submitted.' ||
+          result.error === 'No changes detected'
+        ) {
+          res.status(200).json({
+            success: true,
+            changed: false,
+            message:
+              result.message ||
+              'No changes detected. Nothing needs to be submitted.',
+          });
+          return;
+        }
+        res.status(201).json(result);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ConflictError') {
+          res.status(409).json({
+            success: false,
+            error: error.message,
+          });
+          return;
+        }
+        throw error;
       }
-      res.status(201).json(result);
-    } catch (error) {
-      if (error instanceof Error && error.name === 'ConflictError') {
-        res.status(409).json({
-          success: false,
-          error: error.message,
-        });
-        return;
-      }
-      throw error;
-    }
-  });
+    },
+  );
 
   return router;
 }

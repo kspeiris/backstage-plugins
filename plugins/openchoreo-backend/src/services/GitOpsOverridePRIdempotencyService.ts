@@ -44,6 +44,23 @@ function isDuplicateObjectError(error: unknown): boolean {
   );
 }
 
+function isDuplicateKeyError(error: unknown): boolean {
+  const message = String(error).toLowerCase();
+  const code =
+    error instanceof Error
+      ? (error as Error & { code?: string }).code
+      : undefined;
+
+  return (
+    code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    code === '23505' ||
+    code === 'ER_DUP_ENTRY' ||
+    message.includes('unique constraint') ||
+    message.includes('duplicate key')
+  );
+}
+
 export async function applyGitOpsOverridePRIdempotencyMigrations(
   knex: KnexClient,
   logger: LoggerService,
@@ -72,7 +89,12 @@ export async function applyGitOpsOverridePRIdempotencyMigrations(
       table.timestamp('created_at').notNullable().defaultTo(knex.fn.now());
       table.timestamp('updated_at').notNullable().defaultTo(knex.fn.now());
       table.timestamp('expires_at').nullable();
-      table.index(['namespace_name', 'project_name', 'component_name', 'environment']);
+      table.index([
+        'namespace_name',
+        'project_name',
+        'component_name',
+        'environment',
+      ]);
     });
   } catch (error) {
     if (!isDuplicateObjectError(error)) {
@@ -96,7 +118,7 @@ export class GitOpsOverridePRIdempotencyService {
     return this.mapRow(row);
   }
 
-  async createInProgress(record: IdempotencyRecord): Promise<void> {
+  async createInProgress(record: IdempotencyRecord): Promise<boolean> {
     const now = this.knex.fn.now();
     const expiresAt = this.knex.raw("datetime('now', '+7 days')");
     try {
@@ -113,8 +135,12 @@ export class GitOpsOverridePRIdempotencyService {
         updated_at: now,
         expires_at: expiresAt,
       });
+      return true;
     } catch (error) {
-      // ignore duplicate insert (race)
+      if (isDuplicateKeyError(error)) {
+        return false;
+      }
+      throw error;
     }
   }
 
@@ -152,9 +178,7 @@ export class GitOpsOverridePRIdempotencyService {
 
   async cleanupExpired(): Promise<number> {
     const now = this.knex.fn.now();
-    return this.knex(TABLE_NAME)
-      .where('expires_at', '<', now)
-      .delete();
+    return this.knex(TABLE_NAME).where('expires_at', '<', now).delete();
   }
 
   private mapRow(row: any): IdempotencyRecord {

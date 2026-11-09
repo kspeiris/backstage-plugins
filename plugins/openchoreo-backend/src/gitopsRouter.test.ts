@@ -4,6 +4,7 @@ import request from 'supertest';
 import type { OpenChoreoTokenService } from '@openchoreo/openchoreo-auth';
 import type { EnvironmentInfoService } from './services/EnvironmentService/EnvironmentInfoService';
 import type { GitOpsChangeTrackerService } from './services/GitOpsChangeTrackerService';
+import type { FluxStatusService } from './services/FluxStatusService';
 import type { GitOpsOwnershipService } from './services/GitOpsOwnershipService';
 import type { GitOpsOverridePreviewService } from './services/GitOpsOverridePreviewService';
 import type { GitOpsTargetConfigurationService } from './services/GitOpsTargetConfigurationService';
@@ -48,7 +49,7 @@ describe('GitOps status API', () => {
     preview: jest.fn(),
   } as unknown as GitOpsOverridePreviewService;
 
-  async function createApp() {
+  async function createApp(fluxStatusService?: FluxStatusService) {
     const router = await createGitOpsRouter({
       trackerService,
       ownershipService,
@@ -64,6 +65,7 @@ describe('GitOps status API', () => {
         ['group:default/platform-admins'],
       ),
       environmentInfoService,
+      fluxStatusService,
       tokenService: {} as OpenChoreoTokenService,
       authEnabled: true,
       logger: {
@@ -94,6 +96,7 @@ describe('GitOps status API', () => {
       lastCheckedAt: '2026-10-27T00:00:00Z',
       isStale: false,
     });
+
     environmentInfoService.fetchDeploymentInfo = jest.fn().mockResolvedValue([
       {
         name: 'staging',
@@ -144,6 +147,83 @@ describe('GitOps status API', () => {
       },
       'mock-user-token',
     );
+  });
+
+  it('returns Flux source and applied revisions with reconciliation state', async () => {
+    trackerService.getPullRequestStatus = jest.fn().mockResolvedValue({
+      state: 'MERGED',
+      number: 17,
+    });
+    environmentInfoService.fetchDeploymentInfo = jest.fn().mockResolvedValue([
+      {
+        name: 'staging',
+        resourceName: 'staging',
+        bindingName: 'biocare-web-staging',
+        deployment: { status: 'Ready' },
+      },
+    ]);
+
+    const getStatus = jest.fn().mockResolvedValue({
+      state: 'SYNCED',
+      sourceRevision: 'main@sha1:abc123',
+      appliedRevision: 'main@sha1:abc123',
+    });
+    const response = await request(
+      await createApp({ getStatus } as unknown as FluxStatusService),
+    )
+      .get('/gitops/status')
+      .query({
+        project: 'biocare',
+        component: 'biocare-web',
+        environment: 'staging',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.flux).toEqual({
+      state: 'SYNCED',
+      sourceRevision: 'main@sha1:abc123',
+      appliedRevision: 'main@sha1:abc123',
+    });
+    expect(getStatus).toHaveBeenCalledWith({
+      namespaceName: 'default',
+      projectName: 'biocare',
+      componentName: 'biocare-web',
+    });
+  });
+
+  it('returns an explicit Flux diagnostic when reconciliation status is unavailable', async () => {
+    trackerService.getPullRequestStatus = jest.fn().mockResolvedValue({
+      state: 'MERGED',
+    });
+    environmentInfoService.fetchDeploymentInfo = jest
+      .fn()
+      .mockResolvedValue([]);
+
+    const response = await request(
+      await createApp({
+        getStatus: jest
+          .fn()
+          .mockRejectedValue(new Error('token=do-not-return')),
+      } as unknown as FluxStatusService),
+    )
+      .get('/gitops/status')
+      .query({
+        project: 'biocare',
+        component: 'biocare-web',
+        environment: 'staging',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.flux).toEqual({ state: 'UNKNOWN' });
+    expect(response.body.diagnostics).toContainEqual(
+      expect.objectContaining({
+        source: 'Flux CD',
+        reason: 'FluxStatusUnavailable',
+        message:
+          'The backend could not retrieve Flux reconciliation status. Refresh to try again.',
+      }),
+    );
+    expect(JSON.stringify(response.body)).not.toContain('do-not-return');
   });
 
   it('returns structured deployment failure diagnostics and redacts credentials', async () => {
@@ -643,7 +723,9 @@ describe('GitOps status API', () => {
         userEntityRef: 'user:default/admin@example.com',
         ownershipEntityRefs: [],
       };
-      (targetService.createTarget as jest.Mock).mockResolvedValueOnce(mockTarget);
+      (targetService.createTarget as jest.Mock).mockResolvedValueOnce(
+        mockTarget,
+      );
 
       const adminResponse = await request(await createApp())
         .post('/gitops/targets')
@@ -658,7 +740,9 @@ describe('GitOps status API', () => {
         userEntityRef: 'user:default/team-lead',
         ownershipEntityRefs: ['group:default/platform-admins'],
       };
-      (targetService.updateTarget as jest.Mock).mockResolvedValueOnce(mockTarget);
+      (targetService.updateTarget as jest.Mock).mockResolvedValueOnce(
+        mockTarget,
+      );
 
       const putResponse = await request(await createApp())
         .put('/gitops/targets')

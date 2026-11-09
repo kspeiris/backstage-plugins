@@ -30,6 +30,17 @@ The `namespace` query parameter is optional and defaults to `default`.
 Deployment status is retrieved using the caller's OpenChoreo identity token.
 For a promotion outside the default namespace, pass `namespace` explicitly.
 
+When `openchoreo.gitops.fluxStatus.enabled` is true, the endpoint also reads the
+configured Flux `GitRepository` and `Kustomization` status from Kubernetes. It
+reports `RECONCILING`, `SYNCED`, `OUT_OF_SYNC`, `FAILED`, or `UNKNOWN`, including
+source and applied revisions when available. The backend's Kubernetes identity
+needs only `get` access to those two Flux resources in the configured namespace.
+Flux status is returned only for the namespace, project, and component in the
+configured `fluxStatus.scope`, so unrelated component pages are not presented
+with this Kustomization's state.
+For an in-cluster Backstage deployment, the GitOps repository's
+`backstage-flux-reader.yaml` provides this narrow role binding.
+
 The `promote-openchoreo-component` scaffolder template records the PR it
 creates. To record a PR manually, call the authenticated promotion endpoint:
 
@@ -52,6 +63,11 @@ derives its number from that URL. The API reports pull-request and deployment
 states separately. Missing promotion records return `NOT_CREATED`; when a
 GitHub refresh fails, the last known PR state is returned with
 `pullRequest.isStale: true` and the timestamp of the last successful check.
+
+Override PR submissions use the request idempotency key to return the original
+result on a completed duplicate submission. A key reserved by an in-progress
+request, or reused with a different payload, is rejected with a conflict
+instead of creating another pull request.
 
 ## Installation
 

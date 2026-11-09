@@ -15,10 +15,15 @@ export type DeploymentState =
   | 'FAILED'
   | 'UNKNOWN';
 
-export type GitOpsOwnershipState =
-  | 'GITOPS_MANAGED'
-  | 'API_MANAGED'
+export type FluxSyncState =
+  | 'RECONCILING'
+  | 'SYNCED'
+  | 'OUT_OF_SYNC'
+  | 'FAILED'
+  | 'NOT_CONFIGURED'
   | 'UNKNOWN';
+
+export type GitOpsOwnershipState = 'GITOPS_MANAGED' | 'API_MANAGED' | 'UNKNOWN';
 
 export type GitOpsDiagnosticSource =
   | 'GitHub'
@@ -50,6 +55,14 @@ export interface GitOpsChangeStatus {
     state: DeploymentState;
     syncedRevision?: string;
     bindingReady?: boolean;
+    statusReason?: string;
+    statusMessage?: string;
+  };
+
+  flux?: {
+    state: FluxSyncState;
+    sourceRevision?: string;
+    appliedRevision?: string;
     statusReason?: string;
     statusMessage?: string;
   };

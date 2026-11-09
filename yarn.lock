@@ -7920,7 +7920,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@kubernetes/client-node@npm:1.4.0":
+"@kubernetes/client-node@npm:1.4.0, @kubernetes/client-node@npm:^1.4.0":
   version: 1.4.0
   resolution: "@kubernetes/client-node@npm:1.4.0"
   dependencies:
@@ -9899,6 +9899,7 @@ __metadata:
     "@backstage/plugin-kubernetes-backend": "npm:^0.21.4"
     "@backstage/plugin-kubernetes-node": "npm:^0.4.4"
     "@backstage/plugin-permission-common": "npm:^0.9.9"
+    "@kubernetes/client-node": "npm:^1.4.0"
     "@openchoreo/backstage-plugin-catalog-backend-module": "workspace:^"
     "@openchoreo/backstage-plugin-common": "workspace:^"
     "@openchoreo/backstage-plugin-permission-backend-module-openchoreo-policy": "workspace:^"

@@ -49,13 +49,20 @@ const status = {
     statusReason: 'WaitingForSync',
     statusMessage: 'Waiting for the merged revision to reach the environment.',
   },
+  flux: {
+    state: 'SYNCED' as const,
+    sourceRevision: 'main@sha1:abc123',
+    appliedRevision: 'main@sha1:abc123',
+  },
   lastCheckedAt: '2025-01-01T00:00:00.000Z',
 };
 
 function renderPanel(client: { fetchGitOpsChangeStatus: jest.Mock }) {
   return render(
     <TestApiProvider
-      apis={[[openChoreoClientApiRef, client as OpenChoreoClientApi]]}
+      apis={[
+        [openChoreoClientApiRef, client as unknown as OpenChoreoClientApi],
+      ]}
     >
       <GitOpsChangeStatusPanel entity={entity} environment="prod" />
     </TestApiProvider>,
@@ -87,6 +94,11 @@ describe('GitOpsChangeStatusPanel', () => {
     );
     expect(screen.getByText('Deployment')).toBeInTheDocument();
     expect(screen.getByText('Sync Pending')).toBeInTheDocument();
+    expect(screen.getByText('Flux sync')).toBeInTheDocument();
+    expect(screen.getByText('Synced')).toBeInTheDocument();
+    expect(
+      screen.getByText('Flux source revision: main@sha1:abc123'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Reason: WaitingForSync')).toBeInTheDocument();
     expect(
       screen.getByText(

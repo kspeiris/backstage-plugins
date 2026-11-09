@@ -12,7 +12,10 @@ import CircularProgress from '@material-ui/core/CircularProgress';
 import RefreshIcon from '@material-ui/icons/Refresh';
 import Alert from '@material-ui/lab/Alert';
 import { formatRelativeTime } from '@openchoreo/backstage-plugin-react';
-import type { GitOpsChangeStatus } from '@openchoreo/backstage-plugin-common';
+import type {
+  GitOpsChangeStatus,
+  FluxSyncState,
+} from '@openchoreo/backstage-plugin-common';
 import type { Entity } from '@backstage/catalog-model';
 import { useGitOpsStatus } from '../hooks/useGitOpsStatus';
 
@@ -68,16 +71,21 @@ function chipClass(
   classes: ReturnType<typeof useStyles>,
   state:
     | GitOpsChangeStatus['pullRequest']['state']
-    | GitOpsChangeStatus['deployment']['state'],
+    | GitOpsChangeStatus['deployment']['state']
+    | FluxSyncState,
 ): string {
-  if (state === 'READY' || state === 'MERGED') return classes.positiveChip;
+  if (state === 'READY' || state === 'MERGED' || state === 'SYNCED') {
+    return classes.positiveChip;
+  }
   if (state === 'FAILED' || state === 'CLOSED') return classes.negativeChip;
   if (
     state === 'OPEN' ||
     state === 'IN_REVIEW' ||
     state === 'SYNC_PENDING' ||
     state === 'RECONCILING' ||
-    state === 'DEPLOYING'
+    state === 'DEPLOYING' ||
+    state === 'OUT_OF_SYNC' ||
+    state === 'NOT_CONFIGURED'
   ) {
     return classes.warningChip;
   }
@@ -195,11 +203,35 @@ export const GitOpsChangeStatusPanel = ({
             />
           </Box>
 
+          {data.flux && (
+            <Box className={classes.row}>
+              <Typography variant="caption" className={classes.label}>
+                Flux sync
+              </Typography>
+              <Chip
+                size="small"
+                className={chipClass(classes, data.flux.state)}
+                label={stateLabel(data.flux.state)}
+              />
+            </Box>
+          )}
+
           {data.pullRequest.mergeCommitSha && (
             <Typography variant="caption" className={classes.metadata}>
               Merged revision: {data.pullRequest.mergeCommitSha}
             </Typography>
           )}
+          {data.flux?.sourceRevision && (
+            <Typography variant="caption" className={classes.metadata}>
+              Flux source revision: {data.flux.sourceRevision}
+            </Typography>
+          )}
+          {data.flux?.appliedRevision &&
+            data.flux.appliedRevision !== data.flux.sourceRevision && (
+              <Typography variant="caption" className={classes.metadata}>
+                Last applied revision: {data.flux.appliedRevision}
+              </Typography>
+            )}
           {data.lastCheckedAt && (
             <Typography variant="caption" className={classes.metadata}>
               Checked {formatRelativeTime(data.lastCheckedAt)}
@@ -208,7 +240,12 @@ export const GitOpsChangeStatusPanel = ({
           {data.diagnostics?.map((diagnostic, index) => (
             <Alert
               key={`${diagnostic.source}-${diagnostic.reason ?? index}`}
-              severity={diagnostic.source === 'GitHub' ? 'warning' : 'error'}
+              severity={
+                diagnostic.source === 'GitHub' ||
+                diagnostic.reason === 'FluxOutOfSync'
+                  ? 'warning'
+                  : 'error'
+              }
               action={
                 <Box display="flex" alignItems="center" gridGap={8}>
                   <Button
@@ -233,8 +270,12 @@ export const GitOpsChangeStatusPanel = ({
               }
             >
               <Typography variant="subtitle2">
-                {diagnostic.source === 'GitHub'
+                {diagnostic.reason === 'FluxNotConfigured'
+                  ? 'Flux Status: Not Configured'
+                  : diagnostic.source === 'GitHub'
                   ? `Pull Request Status: ${stateLabel(data.pullRequest.state)}`
+                  : diagnostic.source === 'Flux CD'
+                  ? `Flux Status: ${stateLabel(data.flux?.state ?? 'UNKNOWN')}`
                   : diagnostic.reason === 'DeploymentStatusUnavailable'
                   ? 'Deployment Status: Unavailable'
                   : diagnostic.reason === 'GitHubStatusUnavailable'
@@ -263,11 +304,7 @@ export const GitOpsChangeStatusPanel = ({
           {data.deployment.state !== 'READY' &&
             data.deployment.state !== 'FAILED' &&
             (data.deployment.statusReason || data.deployment.statusMessage) && (
-              <Alert
-                severity={
-                  data.deployment.state === 'FAILED' ? 'error' : 'warning'
-                }
-              >
+              <Alert severity="warning">
                 {data.deployment.statusReason && (
                   <Typography variant="body2">
                     Reason: {data.deployment.statusReason}
